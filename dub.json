@@ -1,0 +1,12 @@
+{
+	"name": "matrix-client",
+	"authors": [
+		"Andreas Zwinkau"
+	],
+	"dependencies": {
+		"requests": "~>0.4.0"
+	},
+	"description": "Library for Matrix.org clients",
+	"copyright": "Copyright © 2017, Andi",
+	"license": "MIT"
+}
