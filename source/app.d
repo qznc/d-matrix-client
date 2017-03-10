@@ -1,7 +1,12 @@
 import std.stdio;
-import requests;
+
+import matrix;
 
 void main()
 {
-	writeln("Edit source/app.d to start your project.");
+    auto c = new Client("https://matrix.org");
+    auto vs = c.versions();
+    writeln(vs);
+    c.login("mymatrixmailer", "XXXX");
+    writeln("success");
 }
