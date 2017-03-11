@@ -14,6 +14,10 @@ immutable(char)[] cstr2dstr(inout(char)* cstr)
 	return cstr ? cstr[0 .. strlen(cstr)].idup : cstr[0 .. 0].idup;
 }
 
+char[] read_random(size_t rnd_len) {
+	return cast(char[]) read("/dev/urandom", rnd_len);
+}
+
 class Account {
 	OlmAccount* account;
 	private this() {
@@ -24,7 +28,7 @@ class Account {
 	static public Account create() {
 		auto a = new Account();
 		const rnd_len = olm_create_account_random_length(a.account);
-		auto rnd_mem = read("/dev/urandom", rnd_len);
+		auto rnd_mem = read_random(rnd_len);
 		olm_create_account(a.account, rnd_mem.ptr, rnd_len);
 		return a;
 	}
@@ -32,12 +36,9 @@ class Account {
 	public string pickle(string key) {
 		char[] ret;
 		ret.length = olm_pickle_account_length(this.account);
-		const actual_len = olm_pickle_account(this.account,
+		const r = olm_pickle_account(this.account,
 			key.ptr, key.length, ret.ptr, ret.length);
-		if (actual_len == olm_error()) {
-			auto msg = olm_account_last_error(this.account);
-			throw new Exception(cstr2dstr(msg));
-		}
+		error_check(r);
 		return assumeUnique(ret);
 	}
 	/// deserialize account data, unlocked by key
@@ -46,10 +47,7 @@ class Account {
 		char[] p = pickle.dup; // p is destroyed!
 		const r = olm_unpickle_account(a.account,
 			key.ptr, key.length, p.ptr, p.length);
-		if (r == olm_error()) {
-			auto msg = olm_account_last_error(a.account);
-			throw new Exception(cstr2dstr(msg));
-		}
+		a.error_check(r);
 		return a;
 	}
 	/// returns a JSON string of identity keys
@@ -58,10 +56,7 @@ class Account {
 		ret.length = olm_account_identity_keys_length(this.account);
 		const r = olm_account_identity_keys(this.account,
 			 ret.ptr, ret.length);
-		if (r == olm_error()) {
-			auto msg = olm_account_last_error(this.account);
-			throw new Exception(cstr2dstr(msg));
-		}
+		error_check(r);
 		return assumeUnique(ret);
 	}
 	/// sign a message
@@ -70,10 +65,7 @@ class Account {
 		ret.length = olm_account_signature_length(this.account);
 		const r = olm_account_sign(this.account,
 			msg.ptr, msg.length, ret.ptr, ret.length);
-		if (r == olm_error()) {
-			auto errmsg = olm_account_last_error(this.account);
-			throw new Exception(cstr2dstr(errmsg));
-		}
+		error_check(r);
 		return assumeUnique(ret);
 	}
 	/// returns a JSON string of one time keys (pre keys)
@@ -82,10 +74,7 @@ class Account {
 		ret.length = olm_account_one_time_keys_length(this.account);
 		const r = olm_account_one_time_keys(this.account,
 			ret.ptr, ret.length);
-		if (r == olm_error()) {
-			auto errmsg = olm_account_last_error(this.account);
-			throw new Exception(cstr2dstr(errmsg));
-		}
+		error_check(r);
 		return assumeUnique(ret);
 	}
 	public void mark_keys_as_published() {
@@ -96,9 +85,122 @@ class Account {
 	}
 	public void generate_one_time_keys(size_t count) {
 		const rnd_len = olm_account_generate_one_time_keys_random_length(this.account, count);
-		auto rnd_mem = read("/dev/urandom", rnd_len);
+		auto rnd_mem = read_random(rnd_len);
 		const r = olm_account_generate_one_time_keys(this.account,
 			count, rnd_mem.ptr, rnd_mem.length);
+	}
+	private void error_check(size_t x) {
+		if (x == olm_error()) {
+			auto errmsg = olm_account_last_error(this.account);
+			throw new Exception(cstr2dstr(errmsg));
+		}
+	}
+}
+
+class Session {
+	OlmSession* session;
+	private this() {
+		const len = olm_session_size();
+		this.session = cast (OlmSession*) processAllocator.allocate(len).ptr;
+	}
+	/// serialize session data, locked by key
+	public string pickle(string key) {
+		char[] ret;
+		ret.length = olm_pickle_session_length(this.session);
+		const r = olm_pickle_session(this.session,
+			key.ptr, key.length, ret.ptr, ret.length);
+		error_check(r);
+		return assumeUnique(ret);
+	}
+	/// deserialize session data, unlocked by key
+	static public Session unpickle(string key, string pickle) {
+		auto a = new Session();
+		char[] p = pickle.dup; // p is destroyed!
+		const r = olm_unpickle_session(a.session,
+			key.ptr, key.length, p.ptr, p.length);
+		a.error_check(r);
+		return a;
+	}
+    public void create_outbound(Account a, string identity_key, string one_time_key) {
+		const rnd_len = olm_create_outbound_session_random_length(this.session);
+		auto rnd_mem = read_random(rnd_len);
+		const r = olm_create_outbound_session(this.session,
+			a.account, identity_key.ptr, identity_key.length,
+			one_time_key.ptr, one_time_key.length,
+			rnd_mem.ptr, rnd_mem.length);
+		error_check(r);
+	}
+	public void create_inbound(Account a, string one_time_key_msg) {
+		char[] msg = one_time_key_msg.dup; // msg is destroyed!
+		const r = olm_create_inbound_session(this.session, a.account,
+			msg.ptr, msg.length);
+		error_check(r);
+	}
+	public void create_inbound_from(Account a, string identity_key, string one_time_key_msg) {
+		char[] msg = one_time_key_msg.dup; // msg is destroyed!
+		const r = olm_create_inbound_session_from(this.session, a.account,
+			identity_key.ptr, identity_key.length,
+			msg.ptr, msg.length);
+		error_check(r);
+	}
+	public @property string id() {
+		char[] ret;
+		ret.length = olm_session_id_length(this.session);
+		const r = olm_session_id(this.session, ret.ptr, ret.length);
+		error_check(r);
+		return assumeUnique(ret);
+	}
+	public bool matches_inbound(string one_time_key_msg) {
+		char[] msg = one_time_key_msg.dup; // msg is destroyed!
+		const r = olm_matches_inbound_session(this.session,
+			msg.ptr, msg.length);
+		error_check(r);
+		return r == 1;
+	}
+	public bool matches_inbound_from(string identity_key, string one_time_key_msg) {
+		char[] msg = one_time_key_msg.dup; // msg is destroyed!
+		const r = olm_matches_inbound_session_from(this.session,
+			identity_key.ptr, identity_key.length,
+			msg.ptr, msg.length);
+		error_check(r);
+		return r == 1;
+	}
+	public string encrypt(string plaintext, out size_t msg_type) {
+		const rnd_len = olm_encrypt_random_length(this.session);
+		auto rnd_mem = read_random(rnd_len);
+		msg_type = olm_encrypt_message_type(this.session);
+		// TODO use enum for msg_type?
+		error_check(msg_type);
+		auto msg_len = olm_encrypt_message_length(this.session, plaintext.length);
+		char[] ret;
+		ret.length = msg_len;
+		const r = olm_encrypt(this.session,
+			plaintext.ptr, plaintext.length,
+			rnd_mem.ptr, rnd_mem.length,
+			ret.ptr, ret.length);
+		error_check(r);
+		return assumeUnique(ret);
+	}
+	public string decrypt(size_t msg_type, string cypher) {
+		char[] c = cypher.dup; // c is destroyed!
+		const max_plain_len = olm_decrypt_max_plaintext_length(this.session,
+			msg_type, c.ptr, c.length);
+		error_check(max_plain_len);
+		char[] ret;
+		ret.length = max_plain_len;
+		c = cypher.dup; // c is destroyed!
+		const r = olm_decrypt(this.session, msg_type,
+			c.ptr, c.length,
+			ret.ptr, ret.length);
+		error_check(r);
+		return assumeUnique(ret[0..r]);
+	}
+
+	private void error_check(size_t x) {
+		if (x == olm_error()) {
+			auto errmsg = olm_session_last_error(this.session);
+			throw new Exception(cstr2dstr(errmsg));
+		}
 	}
 }
 
