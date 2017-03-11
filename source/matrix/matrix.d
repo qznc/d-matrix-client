@@ -7,13 +7,17 @@ import std.algorithm : map;
 
 import requests;
 
+import requests.utils : urlEncoded;
+
 abstract class Client {
     private:
     /// Server, e.g. "https://matrix.org"
     string server_url;
     /// Token received after successful login
     string access_token;
-    /// Identifier of this device by server
+    /// Generate a transaction ID unique across requests with the same access token
+    long tid;
+    /// IDentifier of this device by server
     string device_id;
     /// Matrix user id, known after login
     string user_id;
@@ -81,6 +85,21 @@ abstract class Client {
         //foreach (string k, JSONValue v; j)
         //    writeln(k);
         this.next_batch = j["next_batch"].str;
+    }
+
+    private string nextTransactionID() {
+        scope(exit) this.tid += 1;
+        return text(this.tid);
+    }
+
+    public void send(string roomname, string msg) {
+        auto content = parseJSON("{\"msgtype\": \"m.text\"}");
+        content["body"] = msg;
+        string url = server_url ~ "/_matrix/client/r0/rooms/" ~ roomname
+            ~ "/send/m.room.message/" ~ nextTransactionID()
+            ~ "?access_token=" ~ urlEncoded(this.access_token);
+        auto res = rq.exec!"PUT"(url, text(content));
+        auto j = parseResponse(res);
     }
 
     abstract public void onInviteRoom(const string name, const JSONValue v);

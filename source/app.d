@@ -10,5 +10,6 @@ void main()
     c.login("mymatrixmailer", "XXXX");
     c.sync(100);
     c.sync(100);
+    c.send("!iDkpVrMDXDLxWwprSd:matrix.org", "test via D");
     writeln("success");
 }
