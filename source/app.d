@@ -1,9 +1,14 @@
 import std.stdio;
 
-import matrix;
+import matrix.matrix;
+import matrix.olm;
 
 void main()
 {
+    ubyte major, minor, patch;
+    olm_get_library_version(&major, &minor, &patch);
+    writeln("olm ", major, ".", minor, ".", patch);
+
     auto c = new DummyClient("https://matrix.org");
     auto vs = c.versions();
     writeln(vs);

@@ -1,4 +1,4 @@
-module matrix;
+module matrix.matrix;
 
 import std.json;
 import std.conv : to, text;
