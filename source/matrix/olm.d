@@ -4,6 +4,104 @@ struct OlmAccount;
 struct OlmSession;
 struct OlmUtility;
 
+import std.file : read;
+import std.experimental.allocator : processAllocator;
+import std.exception : assumeUnique;
+
+immutable(char)[] cstr2dstr(inout(char)* cstr)
+{
+	import core.stdc.string: strlen;
+	return cstr ? cstr[0 .. strlen(cstr)].idup : cstr[0 .. 0].idup;
+}
+
+class Account {
+	OlmAccount* account;
+	private this() {
+		const len = olm_account_size();
+		this.account = cast (OlmAccount*) processAllocator.allocate(len).ptr;
+	}
+	/// Create a fresh account, generate keys, etc
+	static public Account create() {
+		auto a = new Account();
+		const rnd_len = olm_create_account_random_length(a.account);
+		auto rnd_mem = read("/dev/urandom", rnd_len);
+		olm_create_account(a.account, rnd_mem.ptr, rnd_len);
+		return a;
+	}
+	/// serialize account data, locked by key
+	public string pickle(string key) {
+		char[] ret;
+		ret.length = olm_pickle_account_length(this.account);
+		const actual_len = olm_pickle_account(this.account,
+			key.ptr, key.length, ret.ptr, ret.length);
+		if (actual_len == olm_error()) {
+			auto msg = olm_account_last_error(this.account);
+			throw new Exception(cstr2dstr(msg));
+		}
+		return assumeUnique(ret);
+	}
+	/// deserialize account data, unlocked by key
+	static public Account unpickle(string key, string pickle) {
+		auto a = new Account();
+		char[] p = pickle.dup; // p is destroyed!
+		const r = olm_unpickle_account(a.account,
+			key.ptr, key.length, p.ptr, p.length);
+		if (r == olm_error()) {
+			auto msg = olm_account_last_error(a.account);
+			throw new Exception(cstr2dstr(msg));
+		}
+		return a;
+	}
+	/// returns a JSON string of identity keys
+	public string identity_keys() {
+		char[] ret;
+		ret.length = olm_account_identity_keys_length(this.account);
+		const r = olm_account_identity_keys(this.account,
+			 ret.ptr, ret.length);
+		if (r == olm_error()) {
+			auto msg = olm_account_last_error(this.account);
+			throw new Exception(cstr2dstr(msg));
+		}
+		return assumeUnique(ret);
+	}
+	/// sign a message
+	public string sign(string msg) {
+		char[] ret;
+		ret.length = olm_account_signature_length(this.account);
+		const r = olm_account_sign(this.account,
+			msg.ptr, msg.length, ret.ptr, ret.length);
+		if (r == olm_error()) {
+			auto errmsg = olm_account_last_error(this.account);
+			throw new Exception(cstr2dstr(errmsg));
+		}
+		return assumeUnique(ret);
+	}
+	/// returns a JSON string of one time keys (pre keys)
+	public string one_time_keys() {
+		char[] ret;
+		ret.length = olm_account_one_time_keys_length(this.account);
+		const r = olm_account_one_time_keys(this.account,
+			ret.ptr, ret.length);
+		if (r == olm_error()) {
+			auto errmsg = olm_account_last_error(this.account);
+			throw new Exception(cstr2dstr(errmsg));
+		}
+		return assumeUnique(ret);
+	}
+	public void mark_keys_as_published() {
+		olm_account_mark_keys_as_published(this.account);
+	}
+	public size_t max_number_of_one_time_keys() {
+		return olm_account_max_number_of_one_time_keys(this.account);
+	}
+	public void generate_one_time_keys(size_t count) {
+		const rnd_len = olm_account_generate_one_time_keys_random_length(this.account, count);
+		auto rnd_mem = read("/dev/urandom", rnd_len);
+		const r = olm_account_generate_one_time_keys(this.account,
+			count, rnd_mem.ptr, rnd_mem.length);
+	}
+}
+
 extern (C):
 // copy&pasted from olm.h
 
@@ -115,7 +213,7 @@ size_t olm_pickle_session(
  * buffer is destroyed */
 size_t olm_unpickle_account(
     OlmAccount * account,
-    const void * key, size_t key_length,
+    const(void)* key, size_t key_length,
     void * pickled, size_t pickled_length
 );
 
