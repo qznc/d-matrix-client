@@ -59,8 +59,10 @@ abstract class Client {
                 "access_token", this.access_token);
         auto res = rq.get(server_url ~ "/_matrix/client/r0/sync", qp);
         auto j = parseResponse(res);
-        if ("rooms" in j)
+        /* sync room states */
+        if ("rooms" in j) {
             foreach(string k, JSONValue v; j["rooms"]) {
+                // TODO events inside rooms
                 switch (k) {
                     case "invite":
                         auto iv = j["rooms"]["invite"];
@@ -81,6 +83,28 @@ abstract class Client {
                         throw new Exception("unknown room event: "~k);
                 }
             }
+        }
+        /* sync presence states */
+        if ("presence" in j && "events" in j["presence"]) {
+            auto events = j["presence"]["events"].array;
+            if (events.length > 0)
+                foreach(JSONValue v; events) {
+                    auto sender = v["sender"].str;
+                    auto presence = v["content"]["presence"].str;
+                    onPresenceUpdate(sender, presence);
+                }
+        }
+        /* sync account_data states */
+        if ("account_data" in j && "events" in j["account_data"]) {
+            auto events = j["account_data"]["events"].array;
+            if (events.length > 0)
+                foreach(JSONValue e; events) {
+                    auto type = e["type"].str;
+                    foreach(string k, JSONValue v; e["content"]) {
+                        onAccountDataUpdate(type, k, v);
+                    }
+                }
+        }
         //import std.stdio;
         //foreach (string k, JSONValue v; j)
         //    writeln(k);
@@ -105,24 +129,32 @@ abstract class Client {
     abstract public void onInviteRoom(const string name, const JSONValue v);
     abstract public void onLeaveRoom(const string name, const JSONValue v);
     abstract public void onJoinRoom(const string name, const JSONValue v);
+    abstract public void onPresenceUpdate(const string name, const string state);
+    abstract public void onAccountDataUpdate(const string type, const string key, const JSONValue value);
 }
 
 final class DummyClient : Client {
+    import std.stdio;
     public this(string url) { super(url); }
     override public void onInviteRoom(const string name, const JSONValue v)
     {
-        import std.stdio;
         writeln("invite "~name~"  "~text(v));
     }
     override public void onLeaveRoom(const string name, const JSONValue v)
     {
-        import std.stdio;
         writeln("leave "~name~"  "~text(v));
     }
     override public void onJoinRoom(const string name, const JSONValue v)
     {
-        import std.stdio;
         writeln("join "~name~"  "~text(v));
+    }
+    override public void onPresenceUpdate(const string name, const string state)
+    {
+        writeln("presence update "~name~"  "~state);
+    }
+    override public void onAccountDataUpdate(const string type, const string key, const JSONValue value)
+    {
+        writeln("account data update "~type~"  "~key~": "~text(value));
     }
 }
 
