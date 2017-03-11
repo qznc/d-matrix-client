@@ -9,6 +9,15 @@ import requests;
 
 import requests.utils : urlEncoded;
 
+enum RoomPreset {
+    /// Joining requires an invite
+    private_chat,
+    /// Joining requires an invite, everybody is admin
+    trusted_private_chat,
+    /// Anybody can join
+    public_chat
+}
+
 abstract class Client {
     private:
     /// Server, e.g. "https://matrix.org"
@@ -111,6 +120,12 @@ abstract class Client {
         this.next_batch = j["next_batch"].str;
     }
 
+    abstract public void onInviteRoom(const string name, const JSONValue v);
+    abstract public void onLeaveRoom(const string name, const JSONValue v);
+    abstract public void onJoinRoom(const string name, const JSONValue v);
+    abstract public void onPresenceUpdate(const string name, const string state);
+    abstract public void onAccountDataUpdate(const string type, const string key, const JSONValue value);
+
     private string nextTransactionID() {
         scope(exit) this.tid += 1;
         return text(this.tid);
@@ -126,11 +141,30 @@ abstract class Client {
         auto j = parseResponse(res);
     }
 
-    abstract public void onInviteRoom(const string name, const JSONValue v);
-    abstract public void onLeaveRoom(const string name, const JSONValue v);
-    abstract public void onJoinRoom(const string name, const JSONValue v);
-    abstract public void onPresenceUpdate(const string name, const string state);
-    abstract public void onAccountDataUpdate(const string type, const string key, const JSONValue value);
+    /** Create a new room on the homeserver
+     *  Returns: id of the room
+     */
+    public string createRoom(RoomPreset p) {
+        JSONValue content = parseJSON("{}");
+        content["preset"] = text(p);
+        string url = server_url ~ "/_matrix/client/r0/createRoom"
+            ~ "?access_token=" ~ urlEncoded(this.access_token);
+        auto payload = text(content);
+        auto res = rq.post(url, payload, "application/json");
+        auto j = parseResponse(res);
+        return j["room_id"].str;
+    }
+
+    public void invite(string roomid, string userid) {
+        JSONValue content = parseJSON("{}");
+        content["user_id"] = userid;
+        string url = server_url ~ "/_matrix/client/r0/rooms/"
+            ~ roomid ~ "/invite"
+            ~ "?access_token=" ~ urlEncoded(this.access_token);
+        auto payload = text(content);
+        auto res = rq.post(url, payload, "application/json");
+        auto j = parseResponse(res);
+    }
 }
 
 final class DummyClient : Client {
