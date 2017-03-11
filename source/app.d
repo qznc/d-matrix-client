@@ -8,6 +8,7 @@ void main()
     auto vs = c.versions();
     writeln(vs);
     c.login("mymatrixmailer", "XXXX");
-    c.sync();
+    c.sync(100);
+    c.sync(100);
     writeln("success");
 }

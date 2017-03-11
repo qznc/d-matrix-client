@@ -1,7 +1,7 @@
 module matrix;
 
 import std.json;
-import std.conv : to;
+import std.conv : to, text;
 import std.array : array;
 import std.algorithm : map;
 
@@ -9,10 +9,16 @@ import requests;
 
 abstract class Client {
     private:
+    /// Server, e.g. "https://matrix.org"
     string server_url;
+    /// Token received after successful login
     string access_token;
+    /// Identifier of this device by server
     string device_id;
+    /// Matrix user id, known after login
     string user_id;
+    /// ID of the last sync
+    string next_batch;
     Request rq;
 
     public this(string url) {
@@ -38,24 +44,67 @@ abstract class Client {
         this.user_id = j["user_id"].str;
     }
 
-    public void sync() {
-        // TODO timeout, since, next_batch
-        import std.stdio;
-        auto res = rq.get(server_url ~ "/_matrix/client/r0/sync",
-                queryParams("set_presence", "offline",
-                    "access_token", this.access_token));
+    public void sync(int timeout) {
+        auto qp = queryParams("set_presence", "offline",
+            "timeout", timeout,
+            "access_token", this.access_token);
+        if (this.next_batch)
+            qp = queryParams("set_presence", "offline",
+                "since", this.next_batch,
+                "timeout", timeout,
+                "access_token", this.access_token);
+        auto res = rq.get(server_url ~ "/_matrix/client/r0/sync", qp);
         auto j = parseResponse(res);
-        foreach(string k; j.object.byKey) {
-            writeln(k, j[k]);
-        }
+        if ("rooms" in j)
+            foreach(string k, JSONValue v; j["rooms"]) {
+                switch (k) {
+                    case "invite":
+                        auto iv = j["rooms"]["invite"];
+                        foreach (string roomname, JSONValue v; iv)
+                            onInviteRoom(roomname, v);
+                        break;
+                    case "leave":
+                        auto iv = j["rooms"]["leave"];
+                        foreach (string roomname, JSONValue v; iv)
+                            onLeaveRoom(roomname, v);
+                        break;
+                    case "join":
+                        auto iv = j["rooms"]["join"];
+                        foreach (string roomname, JSONValue v; iv)
+                            onJoinRoom(roomname, v);
+                        break;
+                    default:
+                        throw new Exception("unknown room event: "~k);
+                }
+            }
+        //import std.stdio;
+        //foreach (string k, JSONValue v; j)
+        //    writeln(k);
+        this.next_batch = j["next_batch"].str;
     }
 
-    abstract public void onRoomEvent() { }
+    abstract public void onInviteRoom(const string name, const JSONValue v);
+    abstract public void onLeaveRoom(const string name, const JSONValue v);
+    abstract public void onJoinRoom(const string name, const JSONValue v);
 }
 
 final class DummyClient : Client {
     public this(string url) { super(url); }
-    override public void onRoomEvent() { }
+    override public void onInviteRoom(const string name, const JSONValue v)
+    {
+        import std.stdio;
+        writeln("invite "~name~"  "~text(v));
+    }
+    override public void onLeaveRoom(const string name, const JSONValue v)
+    {
+        import std.stdio;
+        writeln("leave "~name~"  "~text(v));
+    }
+    override public void onJoinRoom(const string name, const JSONValue v)
+    {
+        import std.stdio;
+        writeln("join "~name~"  "~text(v));
+    }
 }
 
 /* Convert a raw response into JSON
