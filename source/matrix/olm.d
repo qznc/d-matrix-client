@@ -52,7 +52,7 @@ class Account {
 		return a;
 	}
 	/// returns a JSON string of identity keys
-	public string identity_keys() {
+	public @property string identity_keys() {
 		char[] ret;
 		ret.length = olm_account_identity_keys_length(this.account);
 		const r = olm_account_identity_keys(this.account,
@@ -70,7 +70,7 @@ class Account {
 		return assumeUnique(ret);
 	}
 	/// returns a JSON string of one time keys (pre keys)
-	public string one_time_keys() {
+	public @property string one_time_keys() {
 		char[] ret;
 		ret.length = olm_account_one_time_keys_length(this.account);
 		const r = olm_account_one_time_keys(this.account,
@@ -154,27 +154,33 @@ class Session {
 		a.error_check(r);
 		return a;
 	}
-    public void create_outbound(Account a, string identity_key, string one_time_key) {
-		const rnd_len = olm_create_outbound_session_random_length(this.session);
+    static public Session create_outbound(Account a, string identity_key, string one_time_key) {
+		auto s = new Session();
+		const rnd_len = olm_create_outbound_session_random_length(s.session);
 		auto rnd_mem = read_random(rnd_len);
-		const r = olm_create_outbound_session(this.session,
+		const r = olm_create_outbound_session(s.session,
 			a.account, identity_key.ptr, identity_key.length,
 			one_time_key.ptr, one_time_key.length,
 			rnd_mem.ptr, rnd_mem.length);
-		error_check(r);
+		s.error_check(r);
+		return s;
 	}
-	public void create_inbound(Account a, string one_time_key_msg) {
+	static public Session create_inbound(Account a, string one_time_key_msg) {
+		auto s = new Session();
 		char[] msg = one_time_key_msg.dup; // msg is destroyed!
-		const r = olm_create_inbound_session(this.session, a.account,
+		const r = olm_create_inbound_session(s.session, a.account,
 			msg.ptr, msg.length);
-		error_check(r);
+		s.error_check(r);
+		return s;
 	}
-	public void create_inbound_from(Account a, string identity_key, string one_time_key_msg) {
+	static public Session create_inbound_from(Account a, string identity_key, string one_time_key_msg) {
+		auto s = new Session();
 		char[] msg = one_time_key_msg.dup; // msg is destroyed!
-		const r = olm_create_inbound_session_from(this.session, a.account,
+		const r = olm_create_inbound_session_from(s.session, a.account,
 			identity_key.ptr, identity_key.length,
 			msg.ptr, msg.length);
-		error_check(r);
+		s.error_check(r);
+		return s;
 	}
 	public @property string id() {
 		char[] ret;
@@ -248,6 +254,44 @@ unittest {
 	auto plain = "Hello World!";
 	auto cypher = s.encrypt(plain, msg_type);
 	// TODO text decrypt
+}
+
+unittest {
+	import std.json : parseJSON;
+
+	// Setup account 1
+	auto a1 = Account.create();
+	string a1_id_key = parseJSON(a1.identity_keys)["curve25519"].str;
+	a1.generate_one_time_keys(3);
+	string a1_otk;
+	foreach (k,v; parseJSON(a1.one_time_keys)["curve25519"].object) {
+		a1_otk = v.str;
+		break;
+	}
+	a1.mark_keys_as_published();
+
+	// Setup account 2
+	auto a2 = Account.create();
+	string a2_id_key = parseJSON(a2.identity_keys)["curve25519"].str;
+	a2.generate_one_time_keys(3);
+	string a2_otk;
+	foreach (k,v; parseJSON(a2.one_time_keys)["curve25519"].object) {
+		a2_otk = v.str;
+		break;
+	}
+	a2.mark_keys_as_published();
+
+	/** Now a2 publishes his identity and one time keys,
+      * such that a1 can encrypt a message for a2. */
+
+	// exchange
+	auto s1_out = Session.create_outbound(a1, a2_id_key, a2_otk);
+	auto msg = "Hello World!";
+	size_t msg_type;
+	auto cypher = s1_out.encrypt(msg, msg_type);
+	auto s2_in = Session.create_inbound(a2, cypher);
+	auto plain = s2_in.decrypt(msg_type, cypher);
+	assert(plain == msg);
 }
 
 extern (C):
