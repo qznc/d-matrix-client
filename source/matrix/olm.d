@@ -22,7 +22,8 @@ class Account {
 	OlmAccount* account;
 	private this() {
 		const len = olm_account_size();
-		this.account = cast (OlmAccount*) processAllocator.allocate(len).ptr;
+		auto mem = processAllocator.allocate(len);
+		this.account = olm_account(mem.ptr);
 	}
 	/// Create a fresh account, generate keys, etc
 	static public Account create() {
@@ -97,11 +98,43 @@ class Account {
 	}
 }
 
+unittest {
+	import std.json : parseJSON;
+	auto a = Account.create();
+	auto key = "foobar";
+	auto p = a.pickle(key);
+	auto a2 = Account.unpickle(key, p);
+	auto id_keys = parseJSON(a.identity_keys());
+	assert ("curve25519" in id_keys);
+	assert ("ed25519" in id_keys);
+	auto msg = "Hello World!";
+	auto sig_msg = a.sign(msg);
+	// TODO test signature
+
+	auto max = a.max_number_of_one_time_keys();
+	assert (max > 10);
+	auto otks = a.one_time_keys();
+	// none generated so far
+	assert (otks == "{\"curve25519\":{}}");
+	const key_count = 11;
+	a.generate_one_time_keys(key_count);
+	auto j_otks = parseJSON(a.one_time_keys());
+	assert ("curve25519" in j_otks);
+	assert(j_otks["curve25519"].object.length == key_count);
+	auto j_otks2 = parseJSON(a.one_time_keys());
+	assert (j_otks == j_otks2);
+	a.mark_keys_as_published();
+	auto j_otks3 = parseJSON(a.one_time_keys());
+	assert ("curve25519" in j_otks3);
+	assert(j_otks3["curve25519"].object.length == 0);
+}
+
 class Session {
 	OlmSession* session;
-	private this() {
+	public this() {
 		const len = olm_session_size();
-		this.session = cast (OlmSession*) processAllocator.allocate(len).ptr;
+		auto mem = processAllocator.allocate(len);
+		this.session = olm_session(mem.ptr);
 	}
 	/// serialize session data, locked by key
 	public string pickle(string key) {
@@ -202,6 +235,19 @@ class Session {
 			throw new Exception(cstr2dstr(errmsg));
 		}
 	}
+}
+
+unittest {
+	auto s = new Session();
+	auto key = "foobar";
+	auto p = s.pickle(key);
+	auto s2 = Session.unpickle(key, p);
+	assert(s.id == s2.id);
+
+	size_t msg_type;
+	auto plain = "Hello World!";
+	auto cypher = s.encrypt(plain, msg_type);
+	// TODO text decrypt
 }
 
 extern (C):
