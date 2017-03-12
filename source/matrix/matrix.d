@@ -57,6 +57,13 @@ abstract class Client {
         this.user_id = j["user_id"].str;
     }
 
+    public void logout() {
+        auto res = rq.post(server_url ~ "/_matrix/client/r0/logout"
+            ~ "?access_token=" ~ urlEncoded(this.access_token));
+        auto j = parseResponse(res);
+        this.access_token = "";
+    }
+
     public void sync(int timeout) {
         auto qp = queryParams("set_presence", "offline",
             "timeout", timeout,
