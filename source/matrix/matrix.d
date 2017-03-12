@@ -77,60 +77,89 @@ abstract class Client {
         auto j = parseResponse(res);
         /* sync room states */
         if ("rooms" in j) {
-            foreach(string k, JSONValue v; j["rooms"]) {
-                // TODO events inside rooms
-                switch (k) {
-                    case "invite":
-                        auto iv = j["rooms"]["invite"];
-                        foreach (string roomname, JSONValue v; iv)
-                            onInviteRoom(roomname, v);
-                        break;
-                    case "leave":
-                        auto iv = j["rooms"]["leave"];
-                        foreach (string roomname, JSONValue v; iv)
-                            onLeaveRoom(roomname, v);
-                        break;
-                    case "join":
-                        auto iv = j["rooms"]["join"];
-                        foreach (string roomname, JSONValue v; iv)
-                            onJoinRoom(roomname, v);
-                        break;
-                    default:
-                        throw new Exception("unknown room event: "~k);
-                }
-            }
+            syncRoomState(j["rooms"]);
         }
         /* sync presence states */
         if ("presence" in j && "events" in j["presence"]) {
             auto events = j["presence"]["events"].array;
-            if (events.length > 0)
-                foreach(JSONValue v; events) {
-                    auto sender = v["sender"].str;
-                    auto presence = v["content"]["presence"].str;
-                    onPresenceUpdate(sender, presence);
-                }
+            foreach(JSONValue e; events) {
+                onPresenceEvent(e);
+            }
         }
         /* sync account_data states */
         if ("account_data" in j && "events" in j["account_data"]) {
             auto events = j["account_data"]["events"].array;
-            if (events.length > 0)
-                foreach(JSONValue e; events) {
-                    auto type = e["type"].str;
-                    foreach(string k, JSONValue v; e["content"]) {
-                        onAccountDataUpdate(type, k, v);
-                    }
-                }
+            foreach(JSONValue e; events) {
+                onSyncAccountDataEvent(e);
+            }
         }
-        //import std.stdio;
-        //foreach (string k, JSONValue v; j)
-        //    writeln(k);
         this.next_batch = j["next_batch"].str;
     }
 
-    abstract public void onInviteRoom(const string name, const JSONValue v);
+    private void syncRoomState(JSONValue json) {
+        if ("invite" in json) {
+            foreach (string roomname, JSONValue left_room; json["invite"]) {
+                onInviteRoom(roomname);
+                foreach (JSONValue event; left_room["invite_state"]["events"].array)
+                    onInviteEvent(roomname, event);
+            }
+        }
+        if ("leave" in json) {
+            foreach (string roomname, JSONValue left_room; json["leave"]) {
+                onLeaveRoom(roomname, left_room);
+                if ("timeline" in left_room) {
+                    // TODO limited, prev_batch
+                    foreach (event; left_room["timeline"]["events"].array)
+                        onLeaveTimelineEvent(roomname, event);
+                }
+                if ("state" in left_room) {
+                    foreach (event; left_room["state"]["events"].array)
+                        onLeaveStateEvent(roomname, event);
+                }
+            }
+        }
+        if ("join" in json) {
+            foreach (string roomname, JSONValue joined_room; json["join"]) {
+                auto un = joined_room["unread_notifications"];
+                ulong hc, nc;
+                if ("highlight_count" in un)
+                    hc = un["highlight_count"].integer;
+                if ("notification_count" in un)
+                    nc = un["notification_count"].integer;
+                onJoinRoom(roomname, hc, nc);
+                if ("timeline" in joined_room) {
+                    // TODO limited, prev_batch
+                    foreach (event; joined_room["timeline"]["events"].array)
+                        onJoinTimelineEvent(roomname, event);
+                }
+                if ("state" in joined_room) {
+                    foreach (event; joined_room["state"]["events"].array)
+                        onJoinStateEvent(roomname, event);
+                }
+                if ("account_data" in joined_room) {
+                    foreach (event; joined_room["account_data"]["events"].array)
+                        onJoinAccountDataEvent(roomname, event);
+                }
+                if ("ephemeral" in joined_room) {
+                    foreach (event; joined_room["ephemeral"]["events"].array)
+                        onEphemeralEvent(roomname, event);
+                }
+            }
+        }
+    }
+
+    abstract public void onInviteRoom(const string name);
+    abstract public void onInviteEvent(const string name, const JSONValue v);
     abstract public void onLeaveRoom(const string name, const JSONValue v);
-    abstract public void onJoinRoom(const string name, const JSONValue v);
-    abstract public void onPresenceUpdate(const string name, const string state);
+    abstract public void onJoinRoom(const string name, ulong highlight_count, ulong notification_count);
+    abstract public void onLeaveTimelineEvent(const string name, const JSONValue v);
+    abstract public void onLeaveStateEvent(const string name, const JSONValue v);
+    abstract public void onJoinTimelineEvent(const string name, const JSONValue v);
+    abstract public void onJoinStateEvent(const string name, const JSONValue v);
+    abstract public void onJoinAccountDataEvent(const string name, const JSONValue v);
+    abstract public void onSyncAccountDataEvent(const JSONValue v);
+    abstract public void onEphemeralEvent(const string name, const JSONValue v);
+    abstract public void onPresenceEvent(const JSONValue v);
     abstract public void onAccountDataUpdate(const string type, const string key, const JSONValue value);
 
     private string nextTransactionID() {
@@ -177,25 +206,57 @@ abstract class Client {
 final class DummyClient : Client {
     import std.stdio;
     public this(string url) { super(url); }
-    override public void onInviteRoom(const string name, const JSONValue v)
+    override public void onInviteRoom(const string name)
     {
-        writeln("invite "~name~"  "~text(v));
+        writeln("invite "~name~" ...");
+    }
+    override public void onInviteEvent(const string name, const JSONValue v)
+    {
+        writeln("invite event "~name~" ...");
     }
     override public void onLeaveRoom(const string name, const JSONValue v)
     {
-        writeln("leave "~name~"  "~text(v));
+        writeln("leave "~name~" ...");
     }
-    override public void onJoinRoom(const string name, const JSONValue v)
+    override public void onJoinRoom(const string name, ulong highlight_count,   ulong notification_count)
     {
-        writeln("join "~name~"  "~text(v));
+        writeln("join ", name, " ", highlight_count, " ", notification_count);
     }
-    override public void onPresenceUpdate(const string name, const string state)
+    override public void onJoinTimelineEvent(const string name, const JSONValue v)
     {
-        writeln("presence update "~name~"  "~state);
+        writeln("join timeline ", name, " ", v);
+    }
+    override public void onLeaveTimelineEvent(const string name, const JSONValue v)
+    {
+        writeln("leave timeline ", name, " ", v);
+    }
+    override public void onEphemeralEvent(const string name, const JSONValue v)
+    {
+        writeln("ephemeral ", name, " ", v);
+    }
+    override public void onJoinStateEvent(const string name, const JSONValue v)
+    {
+        writeln("join state ", name, " ", v);
+    }
+    override public void onLeaveStateEvent(const string name, const JSONValue v)
+    {
+        writeln("leave state ", name, " ", v);
+    }
+    override public void onJoinAccountDataEvent(const string name, const JSONValue v)
+    {
+        writeln("join account data ", name, " ", v);
+    }
+    override public void onSyncAccountDataEvent(const JSONValue v)
+    {
+        writeln("sync account data ", v);
+    }
+    override public void onPresenceEvent(const JSONValue v)
+    {
+        writeln("presence event ", v);
     }
     override public void onAccountDataUpdate(const string type, const string key, const JSONValue value)
     {
-        writeln("account data update "~type~"  "~key~": "~text(value));
+        writeln("account data update "~type~"  "~key~": ...");
     }
 }
 
