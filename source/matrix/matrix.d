@@ -27,19 +27,43 @@ abstract class Client {
     string access_token;
     /// Generate a transaction ID unique across requests with the same access token
     long tid;
-    /// IDentifier of this device by server
-    string device_id;
-    /// Matrix user id, known after login
-    string user_id;
-    /// ID of the last sync
-    string next_batch;
     Request rq;
     /// Account data for encryption with olm
     Account account = null;
+    /// State of the client, which should be preserved
+    JSONValue state;
+    /// Path where to store the state permanently
+    string state_path;
 
-    public this(string url) {
+    public this(string url, string state_path) {
         this.server_url = url;
-        //this.rq.verbosity = 2;
+        this.state_path = state_path;
+        updateFromStatePath();
+        //this.rq.verbosity = 1;
+    }
+
+    import std.file;
+
+    private void updateFromStatePath() {
+        if (state_path.exists) {
+            string raw = cast(string) read(state_path);
+            this.state = parseJSON(raw);
+            assert("user_id" in state);
+            assert("device_id" in state);
+            assert("next_batch" in state);
+        } else {
+            /* ensure basic fields exist */
+            /// Identifier of this device by server
+            this.state["user_id"] = "";
+            /// Matrix user id, known after login
+            this.state["device_id"] = "";
+            /// ID of the last sync
+            this.state["next_batch"] = "";
+        }
+    }
+
+    public void saveState() const @safe {
+        this.state_path.write(text(state));
     }
 
     public string[] versions() {
@@ -56,8 +80,8 @@ abstract class Client {
                 payload, "application/json");
         auto j = parseResponse(res);
         this.access_token = j["access_token"].str;
-        this.device_id = j["device_id"].str;
-        this.user_id = j["user_id"].str;
+        this.state["device_id"] = j["device_id"];
+        this.state["user_id"] = j["user_id"];
     }
 
     public void logout() {
@@ -71,9 +95,9 @@ abstract class Client {
         auto qp = queryParams("set_presence", "offline",
             "timeout", timeout,
             "access_token", this.access_token);
-        if (this.next_batch)
+        if (state["next_batch"].str != "")
             qp = queryParams("set_presence", "offline",
-                "since", this.next_batch,
+                "since", state["next_batch"].str,
                 "timeout", timeout,
                 "access_token", this.access_token);
         auto res = rq.get(server_url ~ "/_matrix/client/r0/sync", qp);
@@ -96,7 +120,7 @@ abstract class Client {
                 onSyncAccountDataEvent(e);
             }
         }
-        this.next_batch = j["next_batch"].str;
+        state["next_batch"] = j["next_batch"];
     }
 
     private void syncRoomState(JSONValue json) {
@@ -211,20 +235,20 @@ abstract class Client {
      *  If path exist, then load it and decrypt with key.
      *  Otherwise create new keys and store them there encrypted with key.
      **/
-    public void enable_encryption(string key, string path) {
-        import std.file;
-        if (path.exists) {
-            this.account = Account.unpickle(key, readText(path));
+    public void enable_encryption(string key) {
+        if ("encrypted_account" in state) {
+            this.account = Account.unpickle(key, state["encrypted_account"].str);
         } else {
             this.account = Account.create();
-            path.write(this.account.pickle(key));
+            state["encrypted_account"] = account.pickle(key);
         }
         /* create payload for publishing keys to homeserver */
-        assert (this.user_id); // must login first!
+        assert (this.access_token); // must login first!
         const keys = parseJSON(this.account.identity_keys);
+        const device_id = state["device_id"].str;
         JSONValue json = [
-            "device_id": this.device_id,
-            "user_id": this.user_id ];
+            "device_id": device_id,
+            "user_id": state["user_id"].str ];
         json["algorithms"] = ["m.olm.v1.curve25519-aes-sha2",
             "m.megolm.v1.aes-sha2"];
         json["keys"] = [
@@ -283,13 +307,15 @@ abstract class Client {
         /* D creates Canonical JSON as specified by Matrix */
         auto raw = text(j);
         auto signature = this.account.sign(raw);
+        auto user_id = state["user_id"].str;
+        auto device_id = state["device_id"].str;
         j["signatures"] = [user_id: ["ed25519:"~device_id: signature]];
     }
 }
 
 final class DummyClient : Client {
     import std.stdio;
-    public this(string url) { super(url); }
+    public this(string url, string state_path) { super(url, state_path); }
     override public void onInviteRoom(const string name)
     {
         writeln("invite "~name~" ...");

@@ -9,12 +9,13 @@ void main()
     olm_get_library_version(&major, &minor, &patch);
     writeln("olm ", major, ".", minor, ".", patch);
 
-    auto c = new DummyClient("https://matrix.org");
+    auto c = new DummyClient("https://matrix.org", "matrix.state");
     auto vs = c.versions();
     writeln(vs);
     c.login("mymatrixmailer", "XXXX");
+    c.enable_encryption("foo");
     c.sync(100);
-    c.sync(100);
+    c.saveState();
     auto rid = c.createRoom(RoomPreset.trusted_private_chat);
     c.invite(rid, "@qznc:matrix.org");
     c.send(rid, "Welcome to my room");
