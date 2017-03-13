@@ -6,8 +6,9 @@ import std.array : array;
 import std.algorithm : map;
 
 import requests;
-
 import requests.utils : urlEncoded;
+
+import matrix.olm;
 
 enum RoomPreset {
     /// Joining requires an invite
@@ -33,6 +34,8 @@ abstract class Client {
     /// ID of the last sync
     string next_batch;
     Request rq;
+    /// Account data for encryption with olm
+    Account account = null;
 
     public this(string url) {
         this.server_url = url;
@@ -200,6 +203,87 @@ abstract class Client {
         auto payload = text(content);
         auto res = rq.post(url, payload, "application/json");
         auto j = parseResponse(res);
+    }
+
+    /** Enables encryption
+     *  Requires path to file with private keys etc.
+     *  Must be logged in, so we know the user id.
+     *  If path exist, then load it and decrypt with key.
+     *  Otherwise create new keys and store them there encrypted with key.
+     **/
+    public void enable_encryption(string key, string path) {
+        import std.file;
+        if (path.exists) {
+            this.account = Account.unpickle(key, readText(path));
+        } else {
+            this.account = Account.create();
+            path.write(this.account.pickle(key));
+        }
+        /* create payload for publishing keys to homeserver */
+        assert (this.user_id); // must login first!
+        const keys = parseJSON(this.account.identity_keys);
+        JSONValue json = [
+            "device_id": this.device_id,
+            "user_id": this.user_id ];
+        json["algorithms"] = ["m.olm.v1.curve25519-aes-sha2",
+            "m.megolm.v1.aes-sha2"];
+        json["keys"] = [
+            "curve25519:"~device_id: keys["curve25519"].str,
+            "ed25519:"~device_id: keys["ed25519"].str
+        ];
+        sign_json(json);
+        /* actually publish keys */
+        auto payload = text(json);
+        auto res = rq.post(server_url ~ "/_matrix/client/unstable/keys/upload"
+                ~ "?access_token=" ~ urlEncoded(this.access_token),
+                payload, "application/json");
+        auto j = parseResponse(res);
+        uploadOneTimeKeys(j);
+    }
+
+    /** Uploads more one time keys, if necessary */
+    public void uploadOneTimeKeys() {
+        auto res = rq.post(server_url ~ "/_matrix/client/unstable/keys/upload"
+                ~ "?access_token=" ~ urlEncoded(this.access_token),
+                "{}", "application/json");
+        auto j = parseResponse(res);
+        uploadOneTimeKeys(j);
+    }
+
+    private void uploadOneTimeKeys(JSONValue currently) {
+        ulong otkeys_on_server;
+        ulong max_otkeys_on_server = this.account.max_number_of_one_time_keys/2;
+        if ("one_time_key_counts" in currently) {
+            foreach(k,v; currently["one_time_key_counts"].object) {
+                writeln(k,v);
+            }
+        }
+        if (otkeys_on_server >= max_otkeys_on_server)
+            return;
+        /* Generate new keys */
+        auto diff = max_otkeys_on_server - otkeys_on_server;
+        this.account.generate_one_time_keys(diff);
+        auto keys = parseJSON(this.account.one_time_keys());
+        JSONValue allkeys = ["one_time_keys": parseJSON("{}")];
+        foreach(kid,key; keys["curve25519"].object) {
+            JSONValue j = ["key": key];
+            sign_json(j);
+            allkeys["one_time_keys"]["signed_curve25519:"~kid] = j;
+        }
+        /* upload */
+        auto payload = text(allkeys);
+        auto res = rq.post(server_url ~ "/_matrix/client/unstable/keys/upload"
+                ~ "?access_token=" ~ urlEncoded(this.access_token),
+                payload, "application/json");
+        auto j = parseResponse(res);
+        this.account.mark_keys_as_published();
+    }
+
+    private void sign_json(JSONValue j) {
+        /* D creates Canonical JSON as specified by Matrix */
+        auto raw = text(j);
+        auto signature = this.account.sign(raw);
+        j["signatures"] = [user_id: ["ed25519:"~device_id: signature]];
     }
 }
 
