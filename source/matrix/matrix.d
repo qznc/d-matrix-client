@@ -86,8 +86,10 @@ abstract class Client {
                 payload, "application/json");
         auto j = parseResponse(res);
         this.access_token = j["access_token"].str;
-        this.state["device_id"] = j["device_id"];
+        if (state["device_id"].str == "")
+            this.state["device_id"] = j["device_id"];
         this.state["user_id"] = j["user_id"];
+        // TODO store and use refresh_token
     }
 
     public void logout() {
