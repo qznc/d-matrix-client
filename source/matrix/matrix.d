@@ -59,6 +59,12 @@ abstract class Client {
             this.state["device_id"] = "";
             /// ID of the last sync
             this.state["next_batch"] = "";
+            /// We must keep track of rooms
+            this.state["rooms"] = parseJSON("{}");
+            /// We must keep track of other devices
+            this.state["devices"] = parseJSON("{}");
+            /// We must keep track of other users
+            this.state["users"] = parseJSON("{}");
         }
     }
 
@@ -133,6 +139,8 @@ abstract class Client {
         }
         if ("leave" in json) {
             foreach (string roomname, JSONValue left_room; json["leave"]) {
+                assert (roomname in state["rooms"]);
+                state["rooms"][roomname] = null;
                 onLeaveRoom(roomname, left_room);
                 if ("timeline" in left_room) {
                     // TODO limited, prev_batch
@@ -153,15 +161,50 @@ abstract class Client {
                     hc = un["highlight_count"].integer;
                 if ("notification_count" in un)
                     nc = un["notification_count"].integer;
+                if (roomname !in state["rooms"])
+                    state["rooms"][roomname] = parseJSON("{\"members\": []}");
                 onJoinRoom(roomname, hc, nc);
                 if ("timeline" in joined_room) {
                     // TODO limited, prev_batch
-                    foreach (event; joined_room["timeline"]["events"].array)
+                    foreach (event; joined_room["timeline"]["events"].array) {
+                        if (event["type"].str == "m.room.member") {
+                            auto ms = state["rooms"][roomname]["members"].array;
+                            ms ~= event["sender"];
+                            state["rooms"][roomname]["members"] = ms;
+                            continue;
+                        }
+                        if (event["type"].str == "m.room.encryption") {
+                            state["rooms"][roomname]["encrypted"] = true;
+                            // only support megolm
+                            assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
+                            auto sender = event["sender"].str;
+                            writeln(sender, " enabled encryption for ", roomname);
+
+                            continue;
+                        }
                         onJoinTimelineEvent(roomname, event);
+                    }
                 }
                 if ("state" in joined_room) {
-                    foreach (event; joined_room["state"]["events"].array)
+                    foreach (event; joined_room["state"]["events"].array) {
+                        if (event["type"].str == "m.room.name") {
+                            state["rooms"][roomname]["name"]
+                                = event["content"]["name"].str;
+                            continue;
+                        }
+                        if (event["type"].str == "m.room.topic") {
+                            state["rooms"][roomname]["topic"]
+                                = event["content"]["topic"].str;
+                            continue;
+                        }
+                        if (event["type"].str == "m.room.member") {
+                            auto ms = state["rooms"][roomname]["members"].array;
+                            ms ~= event["sender"];
+                            state["rooms"][roomname]["members"] = ms;
+                            continue;
+                        }
                         onJoinStateEvent(roomname, event);
+                    }
                 }
                 if ("account_data" in joined_room) {
                     foreach (event; joined_room["account_data"]["events"].array)
@@ -310,6 +353,13 @@ abstract class Client {
         auto user_id = state["user_id"].str;
         auto device_id = state["device_id"].str;
         j["signatures"] = [user_id: ["ed25519:"~device_id: signature]];
+    }
+
+    public @property string[] rooms() {
+        string[] ret;
+        foreach (roomname, v; state["rooms"].object)
+            ret ~= roomname;
+        return ret;
     }
 }
 
