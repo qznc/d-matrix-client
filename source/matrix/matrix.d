@@ -238,9 +238,9 @@ abstract class Client {
     public void send(string roomname, string msg) {
         if ("encrypted" in state["rooms"][roomname]) {
             /* get device keys */
-            auto q = parseJSON("{}");
+            auto q = parseJSON("{\"device_keys\":{}}");
             foreach (mid; state["rooms"][roomname]["members"].array) {
-                q[mid.str] = parseJSON("{}");
+                q["device_keys"][mid.str] = parseJSON("{}");
             }
             writeln(q);
             string url = server_url ~ "/_matrix/client/unstable/keys/query"
