@@ -242,11 +242,13 @@ abstract class Client {
             foreach (mid; state["rooms"][roomname]["members"].array) {
                 q["device_keys"][mid.str] = parseJSON("{}");
             }
-            writeln(q);
             string url = server_url ~ "/_matrix/client/unstable/keys/query"
                 ~ "?access_token=" ~ urlEncoded(this.access_token);
             auto res = rq.post(url, text(q));
             auto j = parseResponse(res);
+            check_signature(j);
+            // FIXME match user_id-device_id against known information
+            // FIXME for known devices match ed25519 key
             writeln(j);
             assert(false); // TODO ... https://matrix.org/docs/guides/e2e_implementation.html#downloading-the-device-list-for-users-in-the-room
         } else { /* sending unencrypted */
@@ -258,6 +260,11 @@ abstract class Client {
             auto res = rq.exec!"PUT"(url, text(content));
             auto j = parseResponse(res);
         }
+    }
+
+    private void check_signature(JSONValue j) {
+        // FIXME actually implement check
+        /* if signature check fails, mark the failing device as 'evil'
     }
 
     /** Create a new room on the homeserver
