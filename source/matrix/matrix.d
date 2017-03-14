@@ -234,13 +234,28 @@ abstract class Client {
     }
 
     public void send(string roomname, string msg) {
-        auto content = parseJSON("{\"msgtype\": \"m.text\"}");
-        content["body"] = msg;
-        string url = server_url ~ "/_matrix/client/r0/rooms/" ~ roomname
-            ~ "/send/m.room.message/" ~ nextTransactionID()
-            ~ "?access_token=" ~ urlEncoded(this.access_token);
-        auto res = rq.exec!"PUT"(url, text(content));
-        auto j = parseResponse(res);
+        if ("encrypted" in state["rooms"][roomname]) {
+            /* get device keys */
+            auto q = parseJSON("{}");
+            foreach (mid; state["rooms"][roomname]["members"].array) {
+                q[mid.str] = parseJSON("{}");
+            }
+            writeln(q);
+            string url = server_url ~ "/_matrix/client/unstable/keys/query"
+                ~ "?access_token=" ~ urlEncoded(this.access_token);
+            auto res = rq.post(url, text(q));
+            auto j = parseResponse(res);
+            writeln(j);
+            assert(false); // TODO ... https://matrix.org/docs/guides/e2e_implementation.html#downloading-the-device-list-for-users-in-the-room
+        } else { /* sending unencrypted */
+            auto content = parseJSON("{\"msgtype\": \"m.text\"}");
+            content["body"] = msg;
+            string url = server_url ~ "/_matrix/client/r0/rooms/" ~ roomname
+                ~ "/send/m.room.message/" ~ nextTransactionID()
+                ~ "?access_token=" ~ urlEncoded(this.access_token);
+            auto res = rq.exec!"PUT"(url, text(content));
+            auto j = parseResponse(res);
+        }
     }
 
     /** Create a new room on the homeserver
