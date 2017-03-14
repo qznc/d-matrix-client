@@ -168,9 +168,7 @@ abstract class Client {
                     // TODO limited, prev_batch
                     foreach (event; joined_room["timeline"]["events"].array) {
                         if (event["type"].str == "m.room.member") {
-                            auto ms = state["rooms"][roomname]["members"].array;
-                            ms ~= event["sender"];
-                            state["rooms"][roomname]["members"] = ms;
+                            state["rooms"][roomname]["members"].array ~= event["sender"];
                             continue;
                         }
                         if (event["type"].str == "m.room.encryption") {
@@ -198,9 +196,7 @@ abstract class Client {
                             continue;
                         }
                         if (event["type"].str == "m.room.member") {
-                            auto ms = state["rooms"][roomname]["members"].array;
-                            ms ~= event["sender"];
-                            state["rooms"][roomname]["members"] = ms;
+                            state["rooms"][roomname]["members"].array ~= event["sender"];
                             continue;
                         }
                         onJoinStateEvent(roomname, event);
