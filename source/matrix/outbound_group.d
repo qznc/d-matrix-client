@@ -8,9 +8,9 @@ import matrix.olm : cstr2dstr, olm_error, read_random;
 
 import std.stdio; // TODO debug only!
 
-class OutboundGroupSession {
+public class OutboundGroupSession {
     OlmOutboundGroupSession *session;
-    private this() {
+    public this() {
         const len = olm_outbound_group_session_size();
         auto mem = processAllocator.allocate(len);
         this.session = olm_outbound_group_session(mem.ptr);

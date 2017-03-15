@@ -8,7 +8,7 @@ import matrix.olm : cstr2dstr, olm_error;
 
 import std.stdio; // TODO debug only!
 
-class InboundGroupSession {
+public class InboundGroupSession {
     OlmInboundGroupSession *session;
     private this() {
         const len = olm_inbound_group_session_size();
@@ -84,6 +84,18 @@ unittest {
     auto igs = new InboundGroupSession();
     auto p = igs.pickle("foo");
     auto dp = InboundGroupSession.unpickle("foo", p);
+
+    import matrix.outbound_group;
+    auto ogs = new OutboundGroupSession();
+    auto session_key = ogs.session_key;
+    auto plain = "Hello World!";
+    auto cypher = ogs.encrypt(plain);
+    auto msg_index = ogs.message_index;
+    writeln(msg_index, " ", cypher);
+    /* transfer: session_key, cypher, msg_index */
+    igs.init(session_key);
+    auto dec = igs.decrypt(cypher, &msg_index);
+    writeln(msg_index, " ", dec);
 }
 
 extern (C):
