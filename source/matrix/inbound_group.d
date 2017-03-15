@@ -1,5 +1,92 @@
 module matrix.inbound_group;
 
+import std.file : read;
+import std.experimental.allocator : processAllocator;
+import std.exception : assumeUnique;
+
+import matrix.olm : cstr2dstr, olm_error;
+
+import std.stdio; // TODO debug only!
+
+class InboundGroupSession {
+    OlmInboundGroupSession *session;
+    private this() {
+        const len = olm_inbound_group_session_size();
+        auto mem = processAllocator.allocate(len);
+        this.session = olm_inbound_group_session(mem.ptr);
+    }
+    /// serialize session data, locked by key
+    public string pickle(string key) {
+        char[] ret;
+        ret.length = olm_pickle_inbound_group_session_length(this.session);
+        const r = olm_pickle_inbound_group_session(this.session,
+                key.ptr, key.length, ret.ptr, ret.length);
+        error_check(r);
+        return assumeUnique(ret);
+    }
+    /// deserialize session data, unlocked by key
+    static public InboundGroupSession unpickle(string key, string pickle) {
+        auto a = new InboundGroupSession();
+        char[] p = pickle.dup; // p is destroyed!
+        const r = olm_unpickle_inbound_group_session(a.session,
+                key.ptr, key.length, p.ptr, p.length);
+        a.error_check(r);
+        return a;
+    }
+    public void init(string session_key) {
+        olm_init_inbound_group_session(session, session_key.ptr, session_key.length);
+    }
+    public void import_session(string session_key) {
+        olm_import_inbound_group_session(session, session_key.ptr, session_key.length);
+    }
+    public string decrypt(string msg, uint* msg_index) {
+        char[] dummy = msg.dup; // dummy is destroyed!
+        auto len = olm_group_decrypt_max_plaintext_length(session,
+            dummy.ptr, dummy.length);
+        error_check(len);
+        char[] ret;
+        ret.length = len;
+        dummy = msg.dup; // dummy is destroyed!
+        len = olm_group_decrypt(session, dummy.ptr, dummy.length,
+            ret.ptr, len, msg_index);
+        error_check(len);
+        return assumeUnique(ret[0..len]);
+    }
+    public string session_id() {
+        auto len = olm_inbound_group_session_id_length(session);
+        char[] ret;
+        auto r = olm_inbound_group_session_id(session, ret.ptr, len);
+        error_check(r);
+        return assumeUnique(ret);
+    }
+    public @property uint first_known_index() const {
+        return olm_inbound_group_session_first_known_index(session);
+    }
+    public auto export_session(uint message_index) {
+        auto len = olm_export_inbound_group_session_length(session);
+        char[] ret;
+        ret.length = len;
+        auto r = olm_export_inbound_group_session(session,
+            ret.ptr, len, message_index);
+        error_check(r);
+        return assumeUnique(ret);
+
+    }
+    private void error_check(size_t x) {
+        if (x == olm_error()) {
+            auto errmsg = olm_inbound_group_session_last_error(this.session);
+            throw new Exception(cstr2dstr(errmsg));
+        }
+    }
+}
+
+unittest {
+    auto igs = new InboundGroupSession();
+    auto p = igs.pickle("foo");
+    auto dp = InboundGroupSession.unpickle("foo", p);
+}
+
+extern (C):
 // copy&pasted from inbound_group_session.h
 struct OlmInboundGroupSession;
 
@@ -18,7 +105,7 @@ OlmInboundGroupSession * olm_inbound_group_session(
 /**
  * A null terminated string describing the most recent error to happen to a
  * group session */
-const(char)* *olm_inbound_group_session_last_error(
+const(char)* olm_inbound_group_session_last_error(
     const OlmInboundGroupSession *session
 );
 
@@ -76,7 +163,7 @@ size_t olm_unpickle_inbound_group_session(
 size_t olm_init_inbound_group_session(
     OlmInboundGroupSession *session,
     /* base64-encoded keys */
-    const(ubyte)* session_key, size_t session_key_length
+    const(char)* session_key, size_t session_key_length
 );
 
 /**
@@ -92,7 +179,7 @@ size_t olm_import_inbound_group_session(
     OlmInboundGroupSession *session,
     /* base64-encoded keys; note that it will be overwritten with the base64-decoded
        data. */
-    const(ubyte)* session_key, size_t session_key_length
+    const(char)* session_key, size_t session_key_length
 );
 
 
@@ -107,7 +194,7 @@ size_t olm_import_inbound_group_session(
  */
 size_t olm_group_decrypt_max_plaintext_length(
     OlmInboundGroupSession *session,
-    ubyte * message, size_t message_length
+    char* message, size_t message_length
 );
 
 /**
@@ -134,10 +221,10 @@ size_t olm_group_decrypt(
 
     /* input; note that it will be overwritten with the base64-decoded
        message. */
-    ubyte * message, size_t message_length,
+    char* message, size_t message_length,
 
     /* output */
-    ubyte * plaintext, size_t max_plaintext_length,
+    char* plaintext, size_t max_plaintext_length,
     uint * message_index
 );
 
@@ -159,7 +246,7 @@ size_t olm_inbound_group_session_id_length(
  */
 size_t olm_inbound_group_session_id(
     OlmInboundGroupSession *session,
-    ubyte * id, size_t id_length
+    char* id, size_t id_length
 );
 
 /**
@@ -203,6 +290,6 @@ size_t olm_export_inbound_group_session_length(
  */
 size_t olm_export_inbound_group_session(
     OlmInboundGroupSession *session,
-    ubyte * key, size_t key_length, uint message_index
+    char* key, size_t key_length, uint message_index
 );
 

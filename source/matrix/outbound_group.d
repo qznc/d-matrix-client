@@ -1,5 +1,84 @@
 module matrix.outbound_group;
 
+import std.file : read;
+import std.experimental.allocator : processAllocator;
+import std.exception : assumeUnique;
+
+import matrix.olm : cstr2dstr, olm_error, read_random;
+
+import std.stdio; // TODO debug only!
+
+class OutboundGroupSession {
+    OlmOutboundGroupSession *session;
+    private this() {
+        const len = olm_outbound_group_session_size();
+        auto mem = processAllocator.allocate(len);
+        this.session = olm_outbound_group_session(mem.ptr);
+
+        auto rnd_len = olm_init_outbound_group_session_random_length(session);
+        auto rnd_mem = read_random(rnd_len);
+        olm_init_outbound_group_session(session, rnd_mem.ptr, rnd_mem.length);
+    }
+    /// serialize session data, locked by key
+    public string pickle(string key) {
+        char[] ret;
+        ret.length = olm_pickle_outbound_group_session_length(this.session);
+        const r = olm_pickle_outbound_group_session(this.session,
+                key.ptr, key.length, ret.ptr, ret.length);
+        error_check(r);
+        return assumeUnique(ret);
+    }
+    /// deserialize session data, unlocked by key
+    static public OutboundGroupSession unpickle(string key, string pickle) {
+        auto a = new OutboundGroupSession();
+        char[] p = pickle.dup; // p is destroyed!
+        const r = olm_unpickle_outbound_group_session(a.session,
+                key.ptr, key.length, p.ptr, p.length);
+        a.error_check(r);
+        return a;
+    }
+    public string encrypt(string plain) {
+        auto len = olm_group_encrypt_message_length(session, plain.length);
+        error_check(len);
+        char[] ret;
+        ret.length = len;
+        len = olm_group_encrypt(session, plain.ptr, plain.length, ret.ptr, len);
+        error_check(len);
+        return assumeUnique(ret[0..len]);
+    }
+    public string session_id() {
+        auto len = olm_outbound_group_session_id_length(session);
+        char[] ret;
+        auto r = olm_outbound_group_session_id(session, ret.ptr, len);
+        error_check(r);
+        return assumeUnique(ret);
+    }
+    public @property uint message_index() {
+        return olm_outbound_group_session_message_index(session);
+    }
+    public auto session_key() {
+        char[] ret;
+        ret.length = olm_outbound_group_session_key_length(session);
+        auto r = olm_outbound_group_session_key(session, ret.ptr, ret.length);
+        error_check(r);
+        return assumeUnique(ret);
+
+    }
+    private void error_check(size_t x) {
+        if (x == olm_error()) {
+            auto errmsg = olm_outbound_group_session_last_error(this.session);
+            throw new Exception(cstr2dstr(errmsg));
+        }
+    }
+}
+
+unittest {
+    auto igs = new OutboundGroupSession();
+    auto p = igs.pickle("foo");
+    auto dp = OutboundGroupSession.unpickle("foo", p);
+}
+
+
 extern (C):
 // copy&pasted from outbound_group_session.h
 
@@ -20,7 +99,7 @@ OlmOutboundGroupSession * olm_outbound_group_session(
 /**
  * A null terminated string describing the most recent error to happen to a
  * group session */
-const(char)* *olm_outbound_group_session_last_error(
+const(char)* olm_outbound_group_session_last_error(
     const OlmOutboundGroupSession *session
 );
 
@@ -77,7 +156,7 @@ size_t olm_init_outbound_group_session_random_length(
  */
 size_t olm_init_outbound_group_session(
     OlmOutboundGroupSession *session,
-    ubyte *random, size_t random_length
+    char* random, size_t random_length
 );
 
 /**
@@ -96,8 +175,8 @@ size_t olm_group_encrypt_message_length(
  */
 size_t olm_group_encrypt(
     OlmOutboundGroupSession *session,
-    const(ubyte)* plaintext, size_t plaintext_length,
-    ubyte * message, size_t message_length
+    const(char)* plaintext, size_t plaintext_length,
+    char* message, size_t message_length
 );
 
 
@@ -118,7 +197,7 @@ size_t olm_outbound_group_session_id_length(
  */
 size_t olm_outbound_group_session_id(
     OlmOutboundGroupSession *session,
-    ubyte * id, size_t id_length
+    char* id, size_t id_length
 );
 
 /**
@@ -150,5 +229,5 @@ size_t olm_outbound_group_session_key_length(
  */
 size_t olm_outbound_group_session_key(
     OlmOutboundGroupSession *session,
-    ubyte * key, size_t key_length
+    char* key, size_t key_length
 );
