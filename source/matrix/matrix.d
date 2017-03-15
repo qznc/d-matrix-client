@@ -264,7 +264,7 @@ abstract class Client {
 
     private void check_signature(JSONValue j) {
         // FIXME actually implement check
-        /* if signature check fails, mark the failing device as 'evil'
+        /* if signature check fails, mark the failing device as 'evil' */
     }
 
     /** Create a new room on the homeserver
