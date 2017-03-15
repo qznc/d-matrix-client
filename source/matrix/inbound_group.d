@@ -91,11 +91,9 @@ unittest {
     auto plain = "Hello World!";
     auto cypher = ogs.encrypt(plain);
     auto msg_index = ogs.message_index;
-    writeln(msg_index, " ", cypher);
     /* transfer: session_key, cypher, msg_index */
     igs.init(session_key);
     auto dec = igs.decrypt(cypher, &msg_index);
-    writeln(msg_index, " ", dec);
 }
 
 extern (C):
