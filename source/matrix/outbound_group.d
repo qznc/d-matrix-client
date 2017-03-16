@@ -47,9 +47,9 @@ public class OutboundGroupSession {
         return assumeUnique(ret[0..len]);
     }
     public string session_id() {
-        auto len = olm_outbound_group_session_id_length(session);
         char[] ret;
-        auto r = olm_outbound_group_session_id(session, ret.ptr, len);
+        ret.length = olm_outbound_group_session_id_length(session);
+        auto r = olm_outbound_group_session_id(session, ret.ptr, ret.length);
         error_check(r);
         return assumeUnique(ret);
     }
