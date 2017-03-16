@@ -3,7 +3,7 @@ module matrix.matrix;
 import std.json;
 import std.conv : to, text;
 import std.array : array;
-import std.algorithm : map;
+import std.algorithm : map, countUntil;
 
 import requests;
 import requests.utils : urlEncoded;
@@ -61,8 +61,6 @@ abstract class Client {
             this.state["next_batch"] = "";
             /// We must keep track of rooms
             this.state["rooms"] = parseJSON("{}");
-            /// We must keep track of other devices
-            this.state["devices"] = parseJSON("{}");
             /// We must keep track of other users
             this.state["users"] = parseJSON("{}");
         }
@@ -235,21 +233,41 @@ abstract class Client {
         return text(this.tid);
     }
 
+    private void fetchDeviceKeys(string roomname) {
+        auto q = parseJSON("{\"device_keys\":{}}");
+        foreach (mid; state["rooms"][roomname]["members"].array) {
+            q["device_keys"][mid.str] = parseJSON("{}");
+        }
+        string url = server_url ~ "/_matrix/client/unstable/keys/query"
+            ~ "?access_token=" ~ urlEncoded(this.access_token);
+        auto res = rq.post(url, text(q));
+        auto j = parseResponse(res);
+        check_signature(j);
+        //writeln(j);
+        foreach(user_id, j2; j["device_keys"].object) {
+            if (user_id !in state)
+                state[user_id] = parseJSON("{}");
+            foreach(device_id, j3; j2.object) {
+                check_signature(j3);
+                // FIXME match user_id-device_id against known information
+                // FIXME for known devices match ed25519 key
+                if (device_id !in state[user_id]) {
+                    state[user_id][device_id] = parseJSON("{}");
+                }
+                foreach(method, key; j3["keys"].object) {
+                    auto i = method.countUntil(":");
+                    // FIXME what if already in there?
+                    state[user_id][device_id][method[0..i]] = key;
+                }
+                writeln(user_id, device_id, "  ", j3);
+            }
+        }
+    }
+
     public void send(string roomname, string msg) {
         if ("encrypted" in state["rooms"][roomname]) {
-            /* get device keys */
-            auto q = parseJSON("{\"device_keys\":{}}");
-            foreach (mid; state["rooms"][roomname]["members"].array) {
-                q["device_keys"][mid.str] = parseJSON("{}");
-            }
-            string url = server_url ~ "/_matrix/client/unstable/keys/query"
-                ~ "?access_token=" ~ urlEncoded(this.access_token);
-            auto res = rq.post(url, text(q));
-            auto j = parseResponse(res);
-            check_signature(j);
-            // FIXME match user_id-device_id against known information
-            // FIXME for known devices match ed25519 key
-            writeln(j);
+            fetchDeviceKeys(roomname);
+
             assert(false); // TODO ... https://matrix.org/docs/guides/e2e_implementation.html#downloading-the-device-list-for-users-in-the-room
         } else { /* sending unencrypted */
             auto content = parseJSON("{\"msgtype\": \"m.text\"}");
