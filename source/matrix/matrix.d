@@ -8,7 +8,9 @@ import std.algorithm : map, countUntil;
 import requests;
 import requests.utils : urlEncoded;
 
-import matrix.olm;
+import matrix.olm : Session, Account;
+import matrix.inbound_group : InboundGroupSession;
+import matrix.outbound_group : OutboundGroupSession;
 
 enum RoomPreset {
     /// Joining requires an invite
@@ -34,6 +36,10 @@ abstract class Client {
     JSONValue state;
     /// Path where to store the state permanently
     string state_path;
+    /// Encryption box for sending to rooms
+    OutboundGroupSession outbound;
+    /// Decryption box for receiving in rooms
+    InboundGroupSession inbound;
 
     public this(string url, string state_path) {
         this.server_url = url;
@@ -259,7 +265,6 @@ abstract class Client {
                     // FIXME what if already in there?
                     state[user_id][device_id][method[0..i]] = key;
                 }
-                writeln(user_id, device_id, "  ", j3);
             }
         }
     }
@@ -267,8 +272,25 @@ abstract class Client {
     public void send(string roomname, string msg) {
         if ("encrypted" in state["rooms"][roomname]) {
             fetchDeviceKeys(roomname);
-
-            assert(false); // TODO ... https://matrix.org/docs/guides/e2e_implementation.html#downloading-the-device-list-for-users-in-the-room
+            // FIXME check if outbound requires rotation
+            JSONValue payload = [
+                "type": "m.text",
+                "content": msg,
+                "room_id": roomname
+            ];
+            auto cipher = outbound.encrypt(text(payload));
+            JSONValue content = [
+                "algorithm": "m.megolm.v1.aes-sha2",
+                "sender_key": outbound.session_key,
+                "ciphertext": cipher,
+                "session_id": outbound.session_id,
+                "device_id": state["device_id"].str,
+            ];
+            string url = server_url ~ "/_matrix/client/r0/rooms/"
+                ~ roomname ~ "/send/m.room.encrypted/" ~ nextTransactionID()
+                ~ "?access_token=" ~ urlEncoded(this.access_token);
+            auto res = rq.exec!"PUT"(url, text(content));
+            auto j = parseResponse(res);
         } else { /* sending unencrypted */
             auto content = parseJSON("{\"msgtype\": \"m.text\"}");
             content["body"] = msg;
@@ -311,7 +333,7 @@ abstract class Client {
     }
 
     /** Enables encryption
-     *  Requires path to file with private keys etc.
+     *  Requires key because we always store stuff locked up.
      *  Must be logged in, so we know the user id.
      *  If path exist, then load it and decrypt with key.
      *  Otherwise create new keys and store them there encrypted with key.
@@ -322,6 +344,13 @@ abstract class Client {
         } else {
             this.account = Account.create();
             state["encrypted_account"] = account.pickle(key);
+        }
+        if ("encrypted_outbound" in state) {
+            this.outbound = OutboundGroupSession.unpickle(key,
+                state["encrypted_outbound"].str);
+        } else {
+            this.outbound = new OutboundGroupSession();
+            state["encrypted_outbound"] = outbound.pickle(key);
         }
         /* create payload for publishing keys to homeserver */
         assert (this.access_token); // must login first!
@@ -360,7 +389,7 @@ abstract class Client {
         ulong max_otkeys_on_server = this.account.max_number_of_one_time_keys/2;
         if ("one_time_key_counts" in currently) {
             foreach(k,v; currently["one_time_key_counts"].object) {
-                writeln(k,v);
+                writeln("counting one time keys", k, v); // TODO
             }
         }
         if (otkeys_on_server >= max_otkeys_on_server)
