@@ -36,10 +36,8 @@ abstract class Client {
     JSONValue state;
     /// Path where to store the state permanently
     string state_path;
-    /// Encryption box for sending to rooms
-    OutboundGroupSession outbound;
-    /// Decryption box for receiving in rooms
-    InboundGroupSession inbound;
+    /// Encryption key used for all account and session serializations
+    string key;
 
     public this(string url, string state_path) {
         this.server_url = url;
@@ -73,7 +71,7 @@ abstract class Client {
     }
 
     public void saveState() const @safe {
-        this.state_path.write(text(state));
+        this.state_path.write(state.toPrettyString());
     }
 
     public string[] versions() {
@@ -174,6 +172,7 @@ abstract class Client {
                     // TODO limited, prev_batch
                     foreach (event; joined_room["timeline"]["events"].array) {
                         if (event["type"].str == "m.room.member") {
+                            seenUserIdInRoom(event["sender"], roomname);
                             state["rooms"][roomname]["members"].array ~= event["sender"];
                             continue;
                         }
@@ -202,6 +201,7 @@ abstract class Client {
                             continue;
                         }
                         if (event["type"].str == "m.room.member") {
+                            seenUserIdInRoom(event["sender"], roomname);
                             state["rooms"][roomname]["members"].array ~= event["sender"];
                             continue;
                         }
@@ -217,6 +217,15 @@ abstract class Client {
                         onEphemeralEvent(roomname, event);
                 }
             }
+        }
+    }
+
+    private void seenUserIdInRoom(JSONValue user_id, string room_id) {
+        if (user_id.str !in state["rooms"][room_id]["members"]) {
+            state["rooms"][room_id]["members"].array ~= user_id;
+        }
+        if (user_id.str !in state["users"].object) {
+            state["users"][user_id.str] = parseJSON("{}");
         }
     }
 
@@ -249,21 +258,20 @@ abstract class Client {
         auto res = rq.post(url, text(q));
         auto j = parseResponse(res);
         check_signature(j);
-        //writeln(j);
         foreach(user_id, j2; j["device_keys"].object) {
-            if (user_id !in state)
-                state[user_id] = parseJSON("{}");
+            if (user_id !in state["users"])
+                state["users"][user_id] = parseJSON("{}");
             foreach(device_id, j3; j2.object) {
                 check_signature(j3);
                 // FIXME match user_id-device_id against known information
                 // FIXME for known devices match ed25519 key
-                if (device_id !in state[user_id]) {
-                    state[user_id][device_id] = parseJSON("{}");
+                if (device_id !in state["users"][user_id]) {
+                    state["users"][user_id][device_id] = parseJSON("{}");
                 }
                 foreach(method, key; j3["keys"].object) {
                     auto i = method.countUntil(":");
                     // FIXME what if already in there?
-                    state[user_id][device_id][method[0..i]] = key;
+                    state["users"][user_id][device_id][method[0..i]] = key;
                 }
             }
         }
@@ -272,7 +280,15 @@ abstract class Client {
     public void send(string roomname, string msg) {
         if ("encrypted" in state["rooms"][roomname]) {
             fetchDeviceKeys(roomname);
+            OutboundGroupSession outbound;
+            if ("enc_outbound" in state["rooms"]) {
+                outbound = OutboundGroupSession.unpickle(this.key, state["rooms"]["enc_outbound"].str);
+            } else {
+                outbound = new OutboundGroupSession();
+                state["rooms"]["enc_outbound"] = outbound.pickle(this.key);
+            }
             // FIXME check if outbound requires rotation
+            sendSessionKeyAround(roomname, outbound);
             JSONValue payload = [
                 "type": "m.text",
                 "content": msg,
@@ -300,6 +316,93 @@ abstract class Client {
             auto res = rq.exec!"PUT"(url, text(content));
             auto j = parseResponse(res);
         }
+    }
+
+    private void sendSessionKeyAround(string room_id, OutboundGroupSession outbound) {
+        auto s_id = outbound.session_id;
+        auto s_key = outbound.session_key;
+        auto device_id = state["device_id"].str;
+        /* store these details as an inbound session, just as it would when receiving them via an m.room_key event */
+        {
+            auto inb = InboundGroupSession.init(s_key);
+            JSONValue j = [
+                "session_key": s_key,
+                "enc_inbound": inb.pickle(this.key),
+            ];
+            assert (device_id !in state["rooms"][room_id]);
+            state["rooms"][room_id][device_id] = j;
+        }
+        auto devices = devicesOfRoom(room_id);
+        createOlmSessions(devices);
+        /* send session key to all other devices in the room */
+        foreach (user_id; state["rooms"][room_id]["members"].array) {
+            foreach (string device_id, j2; state["users"][user_id.str].object) {
+                JSONValue j = [
+                    "algorithm": "m.megolm.v1.aes-sha2",
+                    "room_id": room_id,
+                    "session_id": s_id,
+                    "session_key": s_key,
+                ];
+                sendToDevice(user_id.str, device_id, text(j));
+            }
+        }
+    }
+
+    private void createOlmSessions(string[] devices) {
+        string[] todo;
+        /* filter devices, where we already have sessions */
+        foreach (dev_id; devices) {
+            if (dev_id !in state["devices"])
+                todo ~= dev_id;
+        }
+        /* claim one time keys */
+        JSONValue payload = ["one_time_keys": parseJSON("{}")];
+        foreach (user_id, j; state["users"].object) {
+            payload["one_time_keys"][user_id] = parseJSON("{}");
+            foreach (dev_id, j2; j.object) {
+                payload["one_time_keys"][user_id][dev_id] = "signed_curve25519";
+            }
+        }
+        string url = server_url ~ "/_matrix/client/unstable/keys/claim"
+            ~ "?access_token=" ~ urlEncoded(this.access_token);
+        auto res = rq.post(url, text(payload), "application/json");
+        /* create sessions from one time keys */
+        auto j = parseResponse(res);
+        foreach (user_id, j; j["one_time_keys"].object) {
+            foreach (device_id, j2; j.object) {
+                foreach (s_key_id, j3; j2.object) {
+                    import std.algorithm : startsWith;
+                    assert (s_key_id.startsWith("signed_curve25519:"));
+                    check_signature(j3);
+                    auto dev_key = j3["key"].str;
+                    auto identity_key = state["users"][user_id][device_id]["ed25519"].str;
+                    auto session = Session.create_outbound(this.account, identity_key, dev_key);
+                    state["users"][user_id][device_id]["enc_session"] = session.pickle(this.key);
+                }
+            }
+        }
+    }
+
+    private void sendToDevice(string user_id, string device_id, string msg) {
+        auto session = Session.unpickle(this.key,
+                state["users"][user_id][device_id]["enc_session"].str);
+        ulong msg_type;
+        auto cipher = session.encrypt(msg, msg_type);
+        // FIXME msg_type?!
+        string url = server_url ~ "/_matrix/client/unstable/sendToDevice/"
+            ~ "/m.room.encrypted/" ~ nextTransactionID()
+            ~ "?access_token=" ~ urlEncoded(this.access_token);
+        auto res = rq.exec!"PUT"(url, cipher);
+    }
+
+    private string[] devicesOfRoom(string room_id) {
+        string[] ret;
+        foreach (user_id; state["rooms"][room_id]["members"].array) {
+            foreach (string device_id, j2; state["users"][user_id.str].object) {
+                ret ~= device_id;
+            }
+        }
+        return ret;
     }
 
     private void check_signature(JSONValue j) {
@@ -339,18 +442,12 @@ abstract class Client {
      *  Otherwise create new keys and store them there encrypted with key.
      **/
     public void enable_encryption(string key) {
+        this.key = key;
         if ("encrypted_account" in state) {
             this.account = Account.unpickle(key, state["encrypted_account"].str);
         } else {
             this.account = Account.create();
             state["encrypted_account"] = account.pickle(key);
-        }
-        if ("encrypted_outbound" in state) {
-            this.outbound = OutboundGroupSession.unpickle(key,
-                state["encrypted_outbound"].str);
-        } else {
-            this.outbound = new OutboundGroupSession();
-            state["encrypted_outbound"] = outbound.pickle(key);
         }
         /* create payload for publishing keys to homeserver */
         assert (this.access_token); // must login first!

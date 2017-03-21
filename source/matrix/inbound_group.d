@@ -33,11 +33,15 @@ public class InboundGroupSession {
         a.error_check(r);
         return a;
     }
-    public void init(string session_key) {
-        olm_init_inbound_group_session(session, session_key.ptr, session_key.length);
+    static public InboundGroupSession init(string session_key) {
+        auto s = new InboundGroupSession();
+        olm_init_inbound_group_session(s.session, session_key.ptr, session_key.length);
+        return s;
     }
-    public void import_session(string session_key) {
-        olm_import_inbound_group_session(session, session_key.ptr, session_key.length);
+    static public InboundGroupSession import_session(string session_key) {
+        auto s = new InboundGroupSession();
+        olm_import_inbound_group_session(s.session, session_key.ptr, session_key.length);
+        return s;
     }
     public string decrypt(string msg, uint* msg_index) {
         char[] dummy = msg.dup; // dummy is destroyed!
@@ -84,7 +88,9 @@ unittest {
     auto igs = new InboundGroupSession();
     auto p = igs.pickle("foo");
     auto dp = InboundGroupSession.unpickle("foo", p);
+}
 
+unittest {
     import matrix.outbound_group;
     auto ogs = new OutboundGroupSession();
     auto session_key = ogs.session_key;
@@ -92,7 +98,7 @@ unittest {
     auto cypher = ogs.encrypt(plain);
     auto msg_index = ogs.message_index;
     /* transfer: session_key, cypher, msg_index */
-    igs.init(session_key);
+    auto igs = InboundGroupSession.init(session_key);
     auto dec = igs.decrypt(cypher, &msg_index);
 }
 
