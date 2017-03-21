@@ -20,6 +20,7 @@ void main()
         c.send(r, "yolo!");
     }
     c.sync(100);
+    c.saveState();
     auto rid = c.createRoom(RoomPreset.trusted_private_chat);
     c.invite(rid, "@qznc:matrix.org");
     c.send(rid, "Welcome to my room");

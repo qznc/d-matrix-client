@@ -3,7 +3,7 @@ module matrix.matrix;
 import std.json;
 import std.conv : to, text;
 import std.array : array;
-import std.algorithm : map, countUntil;
+import std.algorithm : map, countUntil, canFind;
 
 import requests;
 import requests.utils : urlEncoded;
@@ -130,6 +130,18 @@ abstract class Client {
                 onSyncAccountDataEvent(e);
             }
         }
+        if (state["next_batch"].str == "") {
+            /* announce this device */
+            JSONValue ann = [
+                "device_id": state["device_id"],
+                "rooms": parseJSON("[]"),
+            ];
+            foreach (room_id, j; state["rooms"].object) {
+                if ("encrypted" !in state["rooms"][room_id])
+                    continue;
+                ann["rooms"].array ~= JSONValue(room_id);
+            }
+        }
         state["next_batch"] = j["next_batch"];
     }
 
@@ -205,6 +217,15 @@ abstract class Client {
                             state["rooms"][roomname]["members"].array ~= event["sender"];
                             continue;
                         }
+                        if (event["type"].str == "m.room.encryption") {
+                            state["rooms"][roomname]["encrypted"] = true;
+                            // only support megolm
+                            assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
+                            auto sender = event["sender"].str;
+                            writeln(sender, " enabled encryption for ", roomname);
+
+                            continue;
+                        }
                         onJoinStateEvent(roomname, event);
                     }
                 }
@@ -221,7 +242,8 @@ abstract class Client {
     }
 
     private void seenUserIdInRoom(JSONValue user_id, string room_id) {
-        if (user_id.str !in state["rooms"][room_id]["members"]) {
+        auto members = state["rooms"][room_id]["members"].array;
+        if (!members.canFind(user_id)) {
             state["rooms"][room_id]["members"].array ~= user_id;
         }
         if (user_id.str !in state["users"].object) {
@@ -332,8 +354,7 @@ abstract class Client {
             assert (device_id !in state["rooms"][room_id]);
             state["rooms"][room_id][device_id] = j;
         }
-        auto devices = devicesOfRoom(room_id);
-        createOlmSessions(devices);
+        createOlmSessions(state["rooms"][room_id]["members"].array.map!"a.str".array);
         /* send session key to all other devices in the room */
         foreach (user_id; state["rooms"][room_id]["members"].array) {
             foreach (string device_id, j2; state["users"][user_id.str].object) {
@@ -348,16 +369,12 @@ abstract class Client {
         }
     }
 
-    private void createOlmSessions(string[] devices) {
-        string[] todo;
-        /* filter devices, where we already have sessions */
-        foreach (dev_id; devices) {
-            if (dev_id !in state["devices"])
-                todo ~= dev_id;
-        }
+    private void createOlmSessions(const string[] users) {
         /* claim one time keys */
         JSONValue payload = ["one_time_keys": parseJSON("{}")];
         foreach (user_id, j; state["users"].object) {
+            if (!users.canFind(user_id))
+                continue;
             payload["one_time_keys"][user_id] = parseJSON("{}");
             foreach (dev_id, j2; j.object) {
                 payload["one_time_keys"][user_id][dev_id] = "signed_curve25519";
@@ -384,6 +401,8 @@ abstract class Client {
     }
 
     private void sendToDevice(string user_id, string device_id, string msg) {
+        if ("enc_session" !in state["users"][user_id][device_id])
+            return; // TODO throw, instead of silent drop?
         auto session = Session.unpickle(this.key,
                 state["users"][user_id][device_id]["enc_session"].str);
         ulong msg_type;
