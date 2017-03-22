@@ -143,10 +143,20 @@ abstract class Client {
                 "device_id": state["device_id"],
                 "rooms": parseJSON("[]"),
             ];
+            string[] users;
             foreach (room_id, j; state["rooms"].object) {
                 if ("encrypted" !in j.object)
                     continue;
                 ann["rooms"].array ~= JSONValue(room_id);
+                foreach (user_id, j; state["rooms"][room_id]["members"].object) {
+                    if (users.canFind(user_id)) continue;
+                    users ~= user_id;
+                }
+            }
+            foreach (user_id; users) {
+                foreach (string device_id, j2; state["users"][user_id].object) {
+                    sendToDevice(user_id, device_id, text(ann), "m.new_device");
+                }
             }
         }
         state["next_batch"] = j["next_batch"];
@@ -370,7 +380,7 @@ abstract class Client {
                     "session_id": s_id,
                     "session_key": s_key,
                 ];
-                sendToDevice(user_id, device_id, text(j));
+                sendToDevice(user_id, device_id, text(j), "m.room.encrypted");
             }
         }
     }
@@ -406,18 +416,18 @@ abstract class Client {
         }
     }
 
-    private void sendToDevice(string user_id, string device_id, string msg) {
+    private void sendToDevice(string user_id, string device_id, string msg, string msg_type) {
         if (device_id !in state["users"][user_id])
             return; // TODO throw, instead of silent drop?
         if ("enc_session" !in state["users"][user_id][device_id])
             return; // TODO throw, instead of silent drop?
         auto session = Session.unpickle(this.key,
                 state["users"][user_id][device_id]["enc_session"].str);
-        ulong msg_type;
-        auto cipher = session.encrypt(msg, msg_type);
+        ulong msg_typ;
+        auto cipher = session.encrypt(msg, msg_typ);
         // FIXME msg_type?!
         string url = server_url ~ "/_matrix/client/unstable/sendToDevice/"
-            ~ "/m.room.encrypted/" ~ nextTransactionID()
+            ~ "/" ~ msg_type ~ "/" ~ nextTransactionID()
             ~ "?access_token=" ~ urlEncoded(this.access_token);
         auto res = rq.exec!"PUT"(url, cipher);
     }
