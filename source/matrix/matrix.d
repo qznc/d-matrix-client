@@ -130,6 +130,13 @@ abstract class Client {
                 onSyncAccountDataEvent(e);
             }
         }
+        /* sync account_data states */
+        if ("to_device" in j) {
+            auto events = j["to_device"]["events"].array;
+            foreach(JSONValue e; events) {
+                writeln("TO_DEVICE ", e);
+            }
+        }
         if (state["next_batch"].str == "") {
             /* announce this device */
             JSONValue ann = [
@@ -137,7 +144,7 @@ abstract class Client {
                 "rooms": parseJSON("[]"),
             ];
             foreach (room_id, j; state["rooms"].object) {
-                if ("encrypted" !in state["rooms"][room_id])
+                if ("encrypted" !in j.object)
                     continue;
                 ann["rooms"].array ~= JSONValue(room_id);
             }
@@ -178,21 +185,21 @@ abstract class Client {
                 if ("notification_count" in un)
                     nc = un["notification_count"].integer;
                 if (roomname !in state["rooms"])
-                    state["rooms"][roomname] = parseJSON("{\"members\": []}");
+                    state["rooms"][roomname] = parseJSON("{\"members\": {}}");
                 onJoinRoom(roomname, hc, nc);
                 if ("timeline" in joined_room) {
                     // TODO limited, prev_batch
                     foreach (event; joined_room["timeline"]["events"].array) {
+                        auto sender = event["sender"].str;
                         if (event["type"].str == "m.room.member") {
                             seenUserIdInRoom(event["sender"], roomname);
-                            state["rooms"][roomname]["members"].array ~= event["sender"];
+                            state["rooms"][roomname]["members"][sender] = parseJSON("{}");
                             continue;
                         }
                         if (event["type"].str == "m.room.encryption") {
                             state["rooms"][roomname]["encrypted"] = true;
                             // only support megolm
                             assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
-                            auto sender = event["sender"].str;
                             writeln(sender, " enabled encryption for ", roomname);
 
                             continue;
@@ -202,6 +209,7 @@ abstract class Client {
                 }
                 if ("state" in joined_room) {
                     foreach (event; joined_room["state"]["events"].array) {
+                        auto sender = event["sender"].str;
                         if (event["type"].str == "m.room.name") {
                             state["rooms"][roomname]["name"]
                                 = event["content"]["name"].str;
@@ -214,16 +222,14 @@ abstract class Client {
                         }
                         if (event["type"].str == "m.room.member") {
                             seenUserIdInRoom(event["sender"], roomname);
-                            state["rooms"][roomname]["members"].array ~= event["sender"];
+                            state["rooms"][roomname]["members"][sender] = parseJSON("{}");
                             continue;
                         }
                         if (event["type"].str == "m.room.encryption") {
                             state["rooms"][roomname]["encrypted"] = true;
                             // only support megolm
                             assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
-                            auto sender = event["sender"].str;
                             writeln(sender, " enabled encryption for ", roomname);
-
                             continue;
                         }
                         onJoinStateEvent(roomname, event);
@@ -242,11 +248,10 @@ abstract class Client {
     }
 
     private void seenUserIdInRoom(JSONValue user_id, string room_id) {
-        auto members = state["rooms"][room_id]["members"].array;
-        if (!members.canFind(user_id)) {
-            state["rooms"][room_id]["members"].array ~= user_id;
+        if (user_id.str !in state["rooms"][room_id]["members"]) {
+            state["rooms"][room_id]["members"][user_id.str] = parseJSON("{}");
         }
-        if (user_id.str !in state["users"].object) {
+        if (user_id.str !in state["users"]) {
             state["users"][user_id.str] = parseJSON("{}");
         }
     }
@@ -272,8 +277,8 @@ abstract class Client {
 
     private void fetchDeviceKeys(string roomname) {
         auto q = parseJSON("{\"device_keys\":{}}");
-        foreach (mid; state["rooms"][roomname]["members"].array) {
-            q["device_keys"][mid.str] = parseJSON("{}");
+        foreach (user_id, j; state["rooms"][roomname]["members"].object) {
+            q["device_keys"][user_id] = parseJSON("{}");
         }
         string url = server_url ~ "/_matrix/client/unstable/keys/query"
             ~ "?access_token=" ~ urlEncoded(this.access_token);
@@ -303,11 +308,11 @@ abstract class Client {
         if ("encrypted" in state["rooms"][roomname]) {
             fetchDeviceKeys(roomname);
             OutboundGroupSession outbound;
-            if ("enc_outbound" in state["rooms"]) {
-                outbound = OutboundGroupSession.unpickle(this.key, state["rooms"]["enc_outbound"].str);
+            if ("enc_outbound" in state["rooms"][roomname]) {
+                outbound = OutboundGroupSession.unpickle(this.key, state["rooms"][roomname]["enc_outbound"].str);
             } else {
                 outbound = new OutboundGroupSession();
-                state["rooms"]["enc_outbound"] = outbound.pickle(this.key);
+                state["rooms"][roomname]["enc_outbound"] = outbound.pickle(this.key);
             }
             // FIXME check if outbound requires rotation
             sendSessionKeyAround(roomname, outbound);
@@ -345,26 +350,27 @@ abstract class Client {
         auto s_key = outbound.session_key;
         auto device_id = state["device_id"].str;
         /* store these details as an inbound session, just as it would when receiving them via an m.room_key event */
-        {
+        if (device_id !in state["rooms"][room_id]["members"][state["user_id"].str]) {
             auto inb = InboundGroupSession.init(s_key);
             JSONValue j = [
                 "session_key": s_key,
                 "enc_inbound": inb.pickle(this.key),
             ];
-            assert (device_id !in state["rooms"][room_id]);
-            state["rooms"][room_id][device_id] = j;
+            auto uid = state["user_id"].str;
+            assert (device_id !in state["rooms"][room_id]["members"][uid]);
+            state["rooms"][room_id]["members"][uid][device_id] = j;
         }
-        createOlmSessions(state["rooms"][room_id]["members"].array.map!"a.str".array);
+        createOlmSessions(state["rooms"][room_id]["members"].object.byKey.array);
         /* send session key to all other devices in the room */
-        foreach (user_id; state["rooms"][room_id]["members"].array) {
-            foreach (string device_id, j2; state["users"][user_id.str].object) {
+        foreach (user_id, j; state["rooms"][room_id]["members"].object) {
+            foreach (string device_id, j2; j.object) {
                 JSONValue j = [
                     "algorithm": "m.megolm.v1.aes-sha2",
                     "room_id": room_id,
                     "session_id": s_id,
                     "session_key": s_key,
                 ];
-                sendToDevice(user_id.str, device_id, text(j));
+                sendToDevice(user_id, device_id, text(j));
             }
         }
     }
@@ -401,6 +407,8 @@ abstract class Client {
     }
 
     private void sendToDevice(string user_id, string device_id, string msg) {
+        if (device_id !in state["users"][user_id])
+            return; // TODO throw, instead of silent drop?
         if ("enc_session" !in state["users"][user_id][device_id])
             return; // TODO throw, instead of silent drop?
         auto session = Session.unpickle(this.key,
@@ -416,8 +424,8 @@ abstract class Client {
 
     private string[] devicesOfRoom(string room_id) {
         string[] ret;
-        foreach (user_id; state["rooms"][room_id]["members"].array) {
-            foreach (string device_id, j2; state["users"][user_id.str].object) {
+        foreach (user_id, j; state["rooms"][room_id]["members"].object) {
+            foreach (string device_id, j2; j.object) {
                 ret ~= device_id;
             }
         }
