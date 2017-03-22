@@ -130,11 +130,33 @@ abstract class Client {
                 onSyncAccountDataEvent(e);
             }
         }
-        /* sync account_data states */
+        /* direct to device messsages */
         if ("to_device" in j) {
             auto events = j["to_device"]["events"].array;
             foreach(JSONValue e; events) {
                 writeln("TO_DEVICE ", e);
+                assert(false);
+                // FIXME
+            }
+        }
+        /* No idea what device lists is for ... */
+        if ("device_lists" in j) {
+            writeln("DEVICE_LISTS? ", j["device_lists"]);
+            // TODO
+        }
+        // Make sure we notice, if another key pops up
+        foreach (key, j2; j.object) {
+            switch (key) {
+                case "next_batch":
+                case "rooms":
+                case "presence":
+                case "account_data":
+                case "to_device":
+                case "device_lists":
+                    break;
+                default:
+                    writeln("UNKNOWN KEY ", key);
+                    assert(false);
             }
         }
         if (state["next_batch"].str == "") {
