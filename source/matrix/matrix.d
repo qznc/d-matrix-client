@@ -238,26 +238,6 @@ abstract class Client {
                 if (roomname !in state["rooms"])
                     state["rooms"][roomname] = parseJSON("{\"members\": {}}");
                 onJoinRoom(roomname, hc, nc);
-                if ("timeline" in joined_room) {
-                    // TODO limited, prev_batch
-                    foreach (event; joined_room["timeline"]["events"].array) {
-                        auto sender = event["sender"].str;
-                        if (event["type"].str == "m.room.member") {
-                            seenUserIdInRoom(event["sender"], roomname);
-                            state["rooms"][roomname]["members"][sender] = parseJSON("{}");
-                            continue;
-                        }
-                        if (event["type"].str == "m.room.encryption") {
-                            state["rooms"][roomname]["encrypted"] = true;
-                            // only support megolm
-                            assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
-                            writeln(sender, " enabled encryption for ", roomname);
-
-                            continue;
-                        }
-                        onJoinTimelineEvent(roomname, event);
-                    }
-                }
                 if ("state" in joined_room) {
                     foreach (event; joined_room["state"]["events"].array) {
                         auto sender = event["sender"].str;
@@ -286,6 +266,33 @@ abstract class Client {
                         onJoinStateEvent(roomname, event);
                     }
                 }
+                if ("timeline" in joined_room) {
+                    // TODO limited, prev_batch
+                    foreach (event; joined_room["timeline"]["events"].array) {
+                        auto sender = event["sender"].str;
+                        if (event["type"].str == "m.room.member") {
+                            seenUserIdInRoom(event["sender"], roomname);
+                            state["rooms"][roomname]["members"][sender] = parseJSON("{}");
+                            continue;
+                        }
+                        if (event["type"].str == "m.room.encryption") {
+                            state["rooms"][roomname]["encrypted"] = true;
+                            // only support megolm
+                            assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
+                            writeln(sender, " enabled encryption for ", roomname);
+                            continue;
+                        }
+                        if (event["type"].str == "m.room.encrypted") {
+                            assert(state["rooms"][roomname]["encrypted"].type() == JSON_TYPE.TRUE);
+                            // only support megolm
+                            assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
+                            auto plain = decrypt_room(event, state["rooms"][roomname]);
+                            writeln("TODO PLAIN ", plain); // FIXME
+                            continue;
+                        }
+                        onJoinTimelineEvent(roomname, event);
+                    }
+                }
                 if ("account_data" in joined_room) {
                     foreach (event; joined_room["account_data"]["events"].array)
                         onJoinAccountDataEvent(roomname, event);
@@ -296,6 +303,35 @@ abstract class Client {
                 }
             }
         }
+    }
+
+    private JSONValue decrypt_room(JSONValue event, JSONValue roomstate) {
+        writeln("decrypt_room ", event);
+        auto session_id = event["content"]["session_id"].str;
+        auto cipher = event["content"]["ciphertext"].str;
+        auto sender_key = event["content"]["sender_key"].str;
+        auto sender_id = event["sender"].str;
+        auto sender_dev_id = event["content"]["device_id"].str;
+        if (sender_dev_id !in roomstate["members"][sender_id]) {
+            roomstate["members"][sender_id][sender_dev_id] = parseJSON("{}");
+        }
+        auto dev_info = roomstate["members"][sender_id][sender_dev_id];
+        if ("megolm_sessions" !in state)
+            state["megolm_sessions"] = parseJSON("{}");
+        if (session_id in state["megolm_sessions"]) {
+            auto s = state["megolm_sessions"][session_id];
+            writeln("session_key ", s["session_key"].str, "\n        =?= ", sender_key);
+            enforce(s["session_key"].str == sender_key);
+            auto inbound = InboundGroupSession.unpickle(this.key, s["enc_inbound"].str);
+            uint msg_index = cast(uint) dev_info["msg_index"].integer; // TODO cast ok?
+            auto plain = inbound.decrypt(cipher, &msg_index);
+            writeln("plain: ", plain);
+            dev_info["msg_index"] = msg_index;
+        } else { // Unknown session
+            writeln("Unknown session id: ", session_id);
+            state["megolm_sessions"][session_id] = ["session_key": sender_key];
+        }
+        return event; // FIXME
     }
 
     private void seenUserIdInRoom(JSONValue user_id, string room_id) {
@@ -400,16 +436,21 @@ abstract class Client {
         auto s_id = outbound.session_id;
         auto s_key = outbound.session_key;
         auto device_id = state["device_id"].str;
-        /* store these details as an inbound session, just as it would when receiving them via an m.room_key event */
-        if (device_id !in state["rooms"][room_id]["members"][state["user_id"].str]) {
+        /* store these details as an inbound session, just as it would when
+           receiving them via an m.room_key event */
+        {
             auto inb = InboundGroupSession.init(s_key);
             JSONValue j = [
                 "session_key": s_key,
                 "enc_inbound": inb.pickle(this.key),
             ];
+            j["msg_index"] = 0;
             auto uid = state["user_id"].str;
-            assert (device_id !in state["rooms"][room_id]["members"][uid]);
-            state["rooms"][room_id]["members"][uid][device_id] = j;
+            state["rooms"][room_id]["members"][uid][device_id] = parseJSON("{}");
+            if ("megolm_sessions" !in state)
+                state["megolm_sessions"] = [s_id: j];
+            else
+                state["megolm_sessions"][s_id] = j;
         }
         createOlmSessions(state["rooms"][room_id]["members"].object.byKey.array);
         /* send session key to all other devices in the room */
