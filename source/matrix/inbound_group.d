@@ -96,8 +96,8 @@ unittest {
     auto session_key = ogs.session_key;
     auto plain = "Hello World!";
     auto cypher = ogs.encrypt(plain);
-    auto msg_index = ogs.message_index;
     /* transfer: session_key, cypher, msg_index */
+    uint msg_index;
     auto igs = InboundGroupSession.init(session_key);
     auto dec = igs.decrypt(cypher, &msg_index);
 }
