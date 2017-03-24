@@ -21,6 +21,12 @@ enum RoomPreset {
     public_chat
 }
 
+enum Presence:string {
+    online = "online",
+    offline = "offline",
+    unavailable = "unavailable" // e.g. idle
+}
+
 abstract class Client {
     private:
     /// Server, e.g. "https://matrix.org"
@@ -95,18 +101,31 @@ abstract class Client {
     }
 
     public void logout() {
+        setPresence(Presence.offline, "off");
         auto res = rq.post(server_url ~ "/_matrix/client/r0/logout"
             ~ "?access_token=" ~ urlEncoded(this.access_token));
         auto j = parseResponse(res);
         this.access_token = "";
     }
 
+    public void setPresence(Presence p, string status_msg) {
+        JSONValue payload = [
+            "presence": text(p),
+            "status_msg": status_msg,
+            ];
+        string url = server_url ~ "/_matrix/client/r0/presence/"
+            ~ state["user_id"].str ~ "/status"
+            ~ "?access_token=" ~ urlEncoded(this.access_token);
+        auto res = rq.exec!"PUT"(url, text(payload));
+        auto j = parseResponse(res);
+    }
+
     public void sync(int timeout) {
-        auto qp = queryParams("set_presence", "offline",
+        auto qp = queryParams("set_presence", "online",
             "timeout", timeout,
             "access_token", this.access_token);
         if (state["next_batch"].str != "")
-            qp = queryParams("set_presence", "offline",
+            qp = queryParams("set_presence", "online",
                 "since", state["next_batch"].str,
                 "timeout", timeout,
                 "access_token", this.access_token);
