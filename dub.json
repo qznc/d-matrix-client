@@ -9,7 +9,7 @@
 	"description": "Library for Matrix.org clients",
 	"copyright": "Copyright © 2017, Andreas Zwinkau",
 	"license": "MIT",
-	"preBuildCommands": ["cd olm && make && cd build && ln -sf libolm.so.2.2.2 libolm.so"],
-	"lflags": ["-L$PACKAGE_DIR/olm/build"],
-	"libs": ["olm"]
+	"preBuildCommands": ["cd olm && make static"],
+	"lflags": ["olm/build/libolm.a"],
+	"libs": ["stdc++"]
 }
