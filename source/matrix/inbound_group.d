@@ -2,7 +2,7 @@ module matrix.inbound_group;
 
 import std.file : read;
 import std.experimental.allocator : processAllocator;
-import std.exception : assumeUnique;
+import std.exception : assumeUnique, assertThrown;
 
 import matrix.olm : cstr2dstr, olm_error;
 
@@ -66,7 +66,7 @@ public class InboundGroupSession {
     public @property uint first_known_index() const {
         return olm_inbound_group_session_first_known_index(session);
     }
-    public auto export_session(uint message_index) {
+    public string export_session(uint message_index) {
         auto len = olm_export_inbound_group_session_length(session);
         char[] ret;
         ret.length = len;
@@ -95,11 +95,89 @@ unittest {
     auto ogs = new OutboundGroupSession();
     auto session_key = ogs.session_key;
     auto plain = "Hello World!";
-    auto cypher = ogs.encrypt(plain);
-    /* transfer: session_key, cypher, msg_index */
+    auto cipher = ogs.encrypt(plain);
+    /* transfer: session_key, cipher, msg_index */
     uint msg_index;
     auto igs = InboundGroupSession.init(session_key);
-    auto dec = igs.decrypt(cypher, &msg_index);
+    auto dec = igs.decrypt(cipher, &msg_index);
+    //writeln(msg_index, " ", ogs.message_index);
+    assert (dec == plain);
+}
+
+unittest {
+    import matrix.outbound_group;
+    // Alice creates an outbound session
+    auto ogs = new OutboundGroupSession();
+    auto session_key = ogs.session_key;
+    // Can ask for session_key again
+    assert (session_key == ogs.session_key);
+    auto session_id = ogs.session_id;
+    assert (ogs.message_index == 0);
+    // Send session key Bob (securely using Olm/Session)
+    // Bob creates an inbound session with it
+    auto igs = InboundGroupSession.init(session_key);
+    assert (igs.first_known_index == 0);
+    assert (session_id == igs.session_id);
+    {
+        // pickling and unpickling works
+        auto pigs = igs.pickle("foo");
+        auto igs2 = InboundGroupSession.unpickle("foo", pigs);
+        assert (igs.session_id == igs2.session_id);
+    }
+    // Alice encrypts a plain text msg
+    auto plain = "Hello World!";
+    auto cipher = ogs.encrypt(plain);
+    assert (ogs.message_index == 1);
+    // Encryption changes the session_key (the ratchet)
+    auto session_key2 = ogs.session_key;
+    assert (session_key != session_key2);
+    assert (session_id == ogs.session_id);
+    // Bob decrypts it
+    uint msg_index;
+    auto dec = igs.decrypt(cipher, &msg_index);
+    assert (dec == plain);
+    assert (msg_index == 0);
+    {
+        // Using the new session key does not work
+        auto igs2 = InboundGroupSession.init(session_key2);
+        assert (igs2.first_known_index == 1);
+        assertThrown!Exception(igs2.decrypt(cipher, &msg_index));
+    }
+    {
+        // Bob can decrypt again
+        auto dec2 = igs.decrypt(cipher, &msg_index);
+        assert (dec2 == plain);
+        assert (msg_index == 0);
+    }
+    // Alice sends a second message
+    auto cipher2 = ogs.encrypt(plain);
+    assert (ogs.message_index == 2);
+    assert (cipher != cipher2);
+    auto dec2 = igs.decrypt(cipher2, &msg_index);
+    assert (dec2 == plain);
+    assert (msg_index == 1);
+    {
+        // Bob can still decrypt the old msg again
+        auto dec3 = igs.decrypt(cipher, &msg_index);
+        assert (dec3 == plain);
+        assert (msg_index == 0);
+    }
+    {
+        // For the second msg, Bob CAN use the second session key
+        auto igs2 = InboundGroupSession.init(session_key2);
+        assert (igs2.first_known_index == 1);
+        auto dec3 = igs2.decrypt(cipher2, &msg_index);
+        assert (dec3 == plain);
+        assert (msg_index == 1);
+    }
+    {
+        // Bob can reuse the first session key
+        auto igs2 = InboundGroupSession.init(session_key);
+        assert (igs2.first_known_index == 0);
+        auto dec3 = igs2.decrypt(cipher2, &msg_index);
+        assert (dec3 == plain);
+        assert (msg_index == 1);
+    }
 }
 
 extern (C):
