@@ -4,6 +4,7 @@ import std.json;
 import std.conv : to, text;
 import std.array : array;
 import std.algorithm : map, countUntil, canFind;
+import std.exception : enforce;
 
 import requests;
 import requests.utils : urlEncoded;
