@@ -1,10 +1,10 @@
 module matrix.outbound_group;
 
-import std.file : read;
 import std.experimental.allocator : processAllocator;
 import std.exception : assumeUnique;
 
-import matrix.olm : cstr2dstr, olm_error, read_random;
+import matrix.olm : olm_error, read_random;
+import matrix.session : cstr2dstr;
 
 import std.stdio; // TODO debug only!
 

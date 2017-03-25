@@ -8,7 +8,7 @@ import std.algorithm : map, countUntil, canFind;
 import requests;
 import requests.utils : urlEncoded;
 
-import matrix.olm : Session, Account;
+import matrix.session : Session, Account;
 import matrix.inbound_group : InboundGroupSession;
 import matrix.outbound_group : OutboundGroupSession;
 

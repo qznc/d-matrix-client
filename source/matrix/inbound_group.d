@@ -4,7 +4,8 @@ import std.file : read;
 import std.experimental.allocator : processAllocator;
 import std.exception : assumeUnique, assertThrown;
 
-import matrix.olm : cstr2dstr, olm_error;
+import matrix.olm : olm_error;
+import matrix.session : cstr2dstr;
 
 import std.stdio; // TODO debug only!
 
