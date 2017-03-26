@@ -524,20 +524,24 @@ abstract class Client {
         }
     }
 
-    private void sendToDevice(string user_id, string device_id, string msg, string msg_type) {
+    private string encrypt_for_device(string user_id, string device_id, string msg) {
         if (device_id !in state["users"][user_id])
-            return; // TODO throw, instead of silent drop?
+            throw new Exception("Unknown device "~text(device_id));
         if ("enc_session" !in state["users"][user_id][device_id])
-            return; // TODO throw, instead of silent drop?
+            throw new Exception("No session");
         auto session = Session.unpickle(this.key,
                 state["users"][user_id][device_id]["enc_session"].str);
         ulong msg_typ;
         auto cipher = session.encrypt(msg, msg_typ);
-        // FIXME msg_type?!
+        return cipher;
+    }
+
+    private void sendToDevice(string msg, string msg_type) {
         string url = server_url ~ "/_matrix/client/unstable/sendToDevice/"
             ~ "/" ~ msg_type ~ "/" ~ nextTransactionID()
             ~ "?access_token=" ~ urlEncoded(this.access_token);
-        auto res = rq.exec!"PUT"(url, cipher);
+        auto res = rq.exec!"PUT"(url, msg);
+        auto j = parseResponse(res);
     }
 
     private string[] devicesOfRoom(string room_id) {
