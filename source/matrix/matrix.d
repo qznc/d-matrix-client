@@ -140,6 +140,16 @@ abstract class Client {
         if ("presence" in j && "events" in j["presence"]) {
             auto events = j["presence"]["events"].array;
             foreach(JSONValue e; events) {
+                if (e["type"].str == "m.presence") {
+                    auto user_id = e["sender"].str;
+                    auto uj = state["users"][user_id]["presence"];
+                    uj["presence"] = e["content"]["presence"];
+                    if ("currently_active" in e["content"])
+                        uj["currently_active"] = e["content"]["currently_active"];
+                    if ("status_msg" in e["content"])
+                        uj["status_msg"] = e["content"]["status_msg"];
+                    continue;
+                }
                 onPresenceEvent(e);
             }
         }
@@ -197,6 +207,8 @@ abstract class Client {
             }
             foreach (user_id; users) {
                 foreach (string device_id, j2; state["users"][user_id].object) {
+                    if (device_id == "presence")
+                        continue;
                     sendToDevice(user_id, device_id, text(ann), "m.new_device");
                 }
             }
