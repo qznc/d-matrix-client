@@ -167,6 +167,11 @@ abstract class Client {
         if ("to_device" in j) {
             auto events = j["to_device"]["events"].array;
             foreach(JSONValue e; events) {
+                if (e["type"].str == "m.new_device") {
+                    if (e["content"]["device_id"].str == state["device_id"].str)
+                        continue;
+                    writeln("NEW DEVICE: ", e);
+                }
                 writeln("TO_DEVICE ", e);
                 assert(false);
                 // FIXME
@@ -488,6 +493,8 @@ abstract class Client {
             payload[user_id] = parseJSON("{}");
             foreach (string device_id, j2; j.object) {
                 if (device_id == state["device_id"].str)
+                    continue;
+                if (device_id !in state["users"][user_id])
                     continue;
                 writeln("send session '", s_id, "' key to ", user_id, " ", device_id);
                 JSONValue j = [
