@@ -5,6 +5,7 @@ import std.conv : to, text;
 import std.array : array;
 import std.algorithm : map, countUntil, canFind;
 import std.exception : enforce;
+import std.stdio; // for debugging
 
 import requests;
 import requests.utils : urlEncoded;
@@ -142,6 +143,8 @@ abstract class Client {
             foreach(JSONValue e; events) {
                 if (e["type"].str == "m.presence") {
                     auto user_id = e["sender"].str;
+                    if ("presence" !in state["users"][user_id])
+                        state["users"][user_id]["presence"] = parseJSON("{}");
                     auto uj = state["users"][user_id]["presence"];
                     uj["presence"] = e["content"]["presence"];
                     if ("currently_active" in e["content"])
@@ -299,9 +302,7 @@ abstract class Client {
                             assert(state["rooms"][roomname]["encrypted"].type() == JSON_TYPE.TRUE);
                             // only support megolm
                             assert (event["content"]["algorithm"].str == "m.megolm.v1.aes-sha2");
-                            auto plain = decrypt_room(event, state["rooms"][roomname]);
-                            writeln("TODO PLAIN ", plain); // FIXME
-                            continue;
+                            event = decrypt_room(event, state["rooms"][roomname]);
                         }
                         onJoinTimelineEvent(roomname, event);
                     }
@@ -319,7 +320,6 @@ abstract class Client {
     }
 
     private JSONValue decrypt_room(JSONValue event, JSONValue roomstate) {
-        writeln("decrypt_room ", event);
         auto session_id = event["content"]["session_id"].str;
         auto cipher = event["content"]["ciphertext"].str;
         auto sender_key = event["content"]["sender_key"].str;
@@ -332,19 +332,29 @@ abstract class Client {
         if ("megolm_sessions" !in state)
             state["megolm_sessions"] = parseJSON("{}");
         if (session_id in state["megolm_sessions"]) {
+            /* check if session_ids match */
+            auto inbound2 = InboundGroupSession.init(sender_key);
+            enforce(inbound2.session_id == session_id);
             auto s = state["megolm_sessions"][session_id];
-            writeln("session_key ", s["session_key"].str, "\n        =?= ", sender_key);
-            enforce(s["session_key"].str == sender_key);
+            if ("enc_inbound" !in s) {
+                writeln("TODO Cannot decrypt. Key missing.");
+                return event;
+            }
             auto inbound = InboundGroupSession.unpickle(this.key, s["enc_inbound"].str);
-            uint msg_index = cast(uint) dev_info["msg_index"].integer; // TODO cast ok?
+            uint msg_index;
             auto plain = inbound.decrypt(cipher, &msg_index);
-            writeln("plain: ", plain);
             dev_info["msg_index"] = msg_index;
+            event["content"] = [
+                "body": parseJSON(plain)["content"].str,
+                "msgtype": "m.text" ];
+            event["type"] = "m.room.message";
+            return event;
         } else { // Unknown session
             writeln("Unknown session id: ", session_id);
-            state["megolm_sessions"][session_id] = ["session_key": sender_key];
+            state["megolm_sessions"][session_id] = ["sender_identity_key": sender_key, "initiator": sender_id];
         }
-        return event; // FIXME
+        // Decryption failed. Return still-encrypted event.
+        return event;
     }
 
     private void seenUserIdInRoom(JSONValue user_id, string room_id) {
@@ -453,6 +463,7 @@ abstract class Client {
            receiving them via an m.room_key event */
         {
             auto inb = InboundGroupSession.init(s_key);
+            assert (inb.session_id == s_id);
             JSONValue j = [
                 "session_key": s_key,
                 "enc_inbound": inb.pickle(this.key),

@@ -289,7 +289,7 @@ unittest {
 	size_t msg_type;
 	auto cipher = s1_out.encrypt(msg, msg_type);
 	auto s2_in = Session.create_inbound(a2, cipher);
-	assert(s1_out.id == s2_in.id);
+    assert(s1_out.id == s2_in.id);
 	auto plain = s2_in.decrypt(msg_type, cipher);
 	assert(plain == msg);
 }
