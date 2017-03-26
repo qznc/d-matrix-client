@@ -287,8 +287,9 @@ unittest {
 	auto s1_out = Session.create_outbound(a1, a2_id_key, a2_otk);
 	auto msg = "Hello World!";
 	size_t msg_type;
-	auto cypher = s1_out.encrypt(msg, msg_type);
-	auto s2_in = Session.create_inbound(a2, cypher);
-	auto plain = s2_in.decrypt(msg_type, cypher);
+	auto cipher = s1_out.encrypt(msg, msg_type);
+	auto s2_in = Session.create_inbound(a2, cipher);
+	assert(s1_out.id == s2_in.id);
+	auto plain = s2_in.decrypt(msg_type, cipher);
 	assert(plain == msg);
 }
