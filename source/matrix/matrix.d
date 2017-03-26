@@ -198,6 +198,7 @@ abstract class Client {
                 "device_id": state["device_id"],
                 "rooms": parseJSON("[]"),
             ];
+            JSONValue payload = parseJSON("{}");
             string[] users;
             foreach (room_id, j; state["rooms"].object) {
                 if ("encrypted" !in j.object)
@@ -205,16 +206,18 @@ abstract class Client {
                 ann["rooms"].array ~= JSONValue(room_id);
                 foreach (user_id, j; state["rooms"][room_id]["members"].object) {
                     if (users.canFind(user_id)) continue;
+                    if (user_id !in payload) {
+                        payload[user_id] = ["*": parseJSON("{}")];
+                        payload[user_id]["*"]["device_id"] = state["device_id"];
+                        payload[user_id]["*"]["rooms"] = parseJSON("[]");
+                    }
+                    payload[user_id]["*"]["rooms"].array ~= JSONValue(room_id);
                     users ~= user_id;
                 }
             }
-            foreach (user_id; users) {
-                foreach (string device_id, j2; state["users"][user_id].object) {
-                    if (device_id == "presence")
-                        continue;
-                    sendToDevice(user_id, device_id, text(ann), "m.new_device");
-                }
-            }
+            JSONValue wrap = ["messages": payload];
+            // see https://github.com/matrix-org/matrix-doc/issues/860
+            sendToDevice(wrap.toString(), "m.new_device");
         }
         state["next_batch"] = j["next_batch"];
     }
@@ -480,17 +483,25 @@ abstract class Client {
         }
         createOlmSessions(state["rooms"][room_id]["members"].object.byKey.array);
         /* send session key to all other devices in the room */
+        JSONValue payload = parseJSON("{}");
         foreach (user_id, j; state["rooms"][room_id]["members"].object) {
+            payload[user_id] = parseJSON("{}");
             foreach (string device_id, j2; j.object) {
+                if (device_id == state["device_id"].str)
+                    continue;
+                writeln("send session '", s_id, "' key to ", user_id, " ", device_id);
                 JSONValue j = [
                     "algorithm": "m.megolm.v1.aes-sha2",
                     "room_id": room_id,
                     "session_id": s_id,
                     "session_key": s_key,
                 ];
-                sendToDevice(user_id, device_id, text(j), "m.room.encrypted");
+                payload[user_id][device_id] = encrypt_for_device(user_id, device_id, text(j));
             }
         }
+        JSONValue wrap = ["messages": payload];
+        // see https://github.com/matrix-org/matrix-doc/issues/860
+        sendToDevice(text(wrap), "m.room.encrypted");
     }
 
     private void createOlmSessions(const string[] users) {
@@ -538,7 +549,7 @@ abstract class Client {
 
     private void sendToDevice(string msg, string msg_type) {
         string url = server_url ~ "/_matrix/client/unstable/sendToDevice/"
-            ~ "/" ~ msg_type ~ "/" ~ nextTransactionID()
+            ~ msg_type ~ "/" ~ nextTransactionID()
             ~ "?access_token=" ~ urlEncoded(this.access_token);
         auto res = rq.exec!"PUT"(url, msg);
         auto j = parseResponse(res);
