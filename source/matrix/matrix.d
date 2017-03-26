@@ -323,6 +323,11 @@ abstract class Client {
         auto session_id = event["content"]["session_id"].str;
         auto cipher = event["content"]["ciphertext"].str;
         auto sender_key = event["content"]["sender_key"].str;
+        {
+            /* check if session_ids match */
+            auto inbound2 = InboundGroupSession.init(sender_key);
+            //enforce(inbound2.session_id == session_id);
+        }
         auto sender_id = event["sender"].str;
         auto sender_dev_id = event["content"]["device_id"].str;
         if (sender_dev_id !in roomstate["members"][sender_id]) {
@@ -332,9 +337,6 @@ abstract class Client {
         if ("megolm_sessions" !in state)
             state["megolm_sessions"] = parseJSON("{}");
         if (session_id in state["megolm_sessions"]) {
-            /* check if session_ids match */
-            auto inbound2 = InboundGroupSession.init(sender_key);
-            enforce(inbound2.session_id == session_id);
             auto s = state["megolm_sessions"][session_id];
             if ("enc_inbound" !in s) {
                 writeln("TODO Cannot decrypt. Key missing.");
