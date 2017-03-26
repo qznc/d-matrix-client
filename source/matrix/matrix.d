@@ -670,63 +670,6 @@ abstract class Client {
     }
 }
 
-final class DummyClient : Client {
-    import std.stdio;
-    public this(string url, string state_path) { super(url, state_path); }
-    override public void onInviteRoom(const string name)
-    {
-        writeln("invite "~name~" ...");
-    }
-    override public void onInviteEvent(const string name, const JSONValue v)
-    {
-        writeln("invite event "~name~" ...");
-    }
-    override public void onLeaveRoom(const string name, const JSONValue v)
-    {
-        writeln("leave "~name~" ...");
-    }
-    override public void onJoinRoom(const string name, ulong highlight_count,   ulong notification_count)
-    {
-        writeln("join ", name, " ", highlight_count, " ", notification_count);
-    }
-    override public void onJoinTimelineEvent(const string name, const JSONValue v)
-    {
-        writeln("join timeline ", name, " ", v);
-    }
-    override public void onLeaveTimelineEvent(const string name, const JSONValue v)
-    {
-        writeln("leave timeline ", name, " ", v);
-    }
-    override public void onEphemeralEvent(const string name, const JSONValue v)
-    {
-        writeln("ephemeral ", name, " ", v);
-    }
-    override public void onJoinStateEvent(const string name, const JSONValue v)
-    {
-        writeln("join state ", name, " ", v);
-    }
-    override public void onLeaveStateEvent(const string name, const JSONValue v)
-    {
-        writeln("leave state ", name, " ", v);
-    }
-    override public void onJoinAccountDataEvent(const string name, const JSONValue v)
-    {
-        writeln("join account data ", name, " ", v);
-    }
-    override public void onSyncAccountDataEvent(const JSONValue v)
-    {
-        writeln("sync account data ", v);
-    }
-    override public void onPresenceEvent(const JSONValue v)
-    {
-        writeln("presence event ", v);
-    }
-    override public void onAccountDataUpdate(const string type, const string key, const JSONValue value)
-    {
-        writeln("account data update "~type~"  "~key~": ...");
-    }
-}
-
 /* Convert a raw response into JSON
  * and check for a Matrix error */
 JSONValue parseResponse(Response res) {
